@@ -1,77 +1,96 @@
 # agent-board
 
-Home-only Markdown task board and workflow runner for coding agents such as Codex and Claude Code.
+A small Markdown task board and workflow runner for coding agents.
 
-`agent-board` keeps durable project state out of chat. It gives agents a small PM system for goals, tasks, specs, knowledge, deterministic workflows, and run logs while keeping the source of truth as plain files in `~/.agent-board`.
+`agent-board` gives Codex, Claude Code, and similar agents a shared place to keep track of work: goals, tasks, specs, knowledge, workflow recipes, and run logs. Everything is plain text under `~/.agent-board`; your repository does not need a `.agent` folder.
+
+It is deliberately simple. No database, no daemon, no hosted service. The CLI owns state. Skills tell agents how to behave. Workflows describe which agents should run and in what order.
 
 ## Why
 
-Chats are bad long-term project memory. Agents lose focus when the plan, blockers, and decisions live only in conversation. `agent-board` makes the working state explicit:
+Chat is a poor source of truth for multi-step coding work. A plan gets discussed, a blocker appears, a review finds follow-up work, and after a few turns nobody has a durable map of what is actually next.
 
-- Goals keep the active slice narrow.
-- Tasks are executable units with status, dependencies, blockers, and linked specs.
-- Specs hold durable reasoning, acceptance criteria, and plans.
-- Knowledge holds reusable facts, decisions, and gotchas.
-- Workflows define how agents are delegated.
-- Runs preserve prompts, stdout/stderr, summaries, and sidecar outputs.
+`agent-board` keeps that map on disk:
 
-`agent-board` is not a security boundary. It is a trusted local orchestrator.
+- `goals` keep a slice of work focused
+- `tasks` track executable work, status, blockers, and dependencies
+- `specs` keep design notes and acceptance criteria
+- `knowledge` keeps decisions, gotchas, and reusable facts
+- `workflows` run Codex/Claude steps from YAML
+- `runs` store prompts, logs, and summaries
+
+This is not a sandbox or approval system. It runs local agents with local privileges. Treat it as a project memory and orchestration layer.
 
 ## Install
 
 ```sh
 bun install
 bun link
+agent-board skills install
 ```
 
-This exposes both binaries:
+The package exposes both commands:
 
 ```sh
 agent-board --help
 agent --help
 ```
 
-Install global helper skills for Claude/Codex-style agents:
+`agent-board skills install` links the bundled skill into:
 
-```sh
-agent-board skills install
+```txt
+~/.claude/skills/agent-board
+~/.agents/skills/agent-board
 ```
 
-## Quick Start
+## First Run
 
-From any repo:
+From a repository:
 
 ```sh
 agent-board init --project my-project
 agent-board goal new "CLI MVP" --id cli-mvp
 agent-board goal use cli-mvp
+
 agent-board spec new "CLI MVP plan" --scope project
 agent-board knowledge add "Use Bun and Commander" --kind decision --scope project
+
 agent-board new "Add task CLI" --status ready --priority high
 agent-board link add-task-cli --spec cli-mvp-plan
+
 agent-board status
 agent-board plan
 agent-board run add-task-cli --workflow dev
-agent-board runs add-task-cli
-agent-board logs <run-id>
 ```
 
-## Concepts
+Inspect the run:
 
-| Concept | Purpose |
-| --- | --- |
-| Project | Repo/execution boundary registered by `repo_path`. |
-| Goal | Focused PM slice inside a project. Tasks and runs are goal-level. |
-| Task | Concrete executable work item with status and graph metadata. |
-| Spec | Durable reasoning, design plan, acceptance criteria, or decisions. |
-| Knowledge | Reusable notes, gotchas, and project facts. |
-| Workflow | YAML recipe that runs agent steps sequentially or in parallel. |
-| Run | Stored workflow execution logs and prompts. |
-| Skill | Agent instructions installed globally; `agent-board` ships one bundled skill. |
+```sh
+agent-board runs add-task-cli
+agent-board logs <run-id-or-prefix>
+```
 
-## Storage Model
+`run` prints the run id as soon as the run folder exists, so you can refer to it immediately.
 
-There is no project-local `.agent` source of truth. Everything lives under `~/.agent-board`:
+## How It Thinks About Work
+
+**Project** is a registered repository path.
+
+**Goal** is the active slice of work inside a project. Tasks and runs belong to a goal.
+
+**Task** is work that can be claimed and finished.
+
+**Spec** is durable reasoning: why something is being built, what tradeoffs matter, what done means.
+
+**Knowledge** is reusable project memory: decisions, gotchas, conventions, facts.
+
+**Workflow** is a YAML recipe for running agents.
+
+**Run** is the saved execution: prompt, stdout/stderr, summary, and metadata.
+
+## Storage
+
+All state lives in `~/.agent-board`:
 
 ```txt
 ~/.agent-board/
@@ -80,12 +99,12 @@ There is no project-local `.agent` source of truth. Everything lives under `~/.a
   specs/
   knowledge/
   skills/agent-board/
-  projects/<project-slug>/
+  projects/<project>/
     project.json
     workflows/
     specs/
     knowledge/
-    goals/<goal-slug>/
+    goals/<goal>/
       goal.md
       tasks/
       runs/
@@ -95,7 +114,9 @@ There is no project-local `.agent` source of truth. Everything lives under `~/.a
       status.md
 ```
 
-The CLI resolves the current project by matching `cwd` against registered `repo_path` values. Use overrides when needed:
+The registry maps repository paths to projects. From any subdirectory in a registered repo, the CLI can resolve the project and active goal.
+
+Use explicit overrides when needed:
 
 ```sh
 agent-board --project my-project --goal cli-mvp status
@@ -104,25 +125,19 @@ AGENT_BOARD_PROJECT=my-project AGENT_BOARD_GOAL=cli-mvp agent-board status
 
 ## Overlays
 
-Specs, knowledge, and workflows exist at three levels:
+Specs, knowledge, and workflows can live at three levels:
 
-- `global`: reusable across projects.
-- `project`: repo-level defaults and shared context.
-- `goal`: slice-specific notes, temporary decisions, and overrides.
+- `global`: shared across projects
+- `project`: shared by all goals in one repo
+- `goal`: specific to the active slice
 
-Workflow lookup precedence is:
-
-```txt
-goal > project > global
-```
-
-Unqualified spec lookups resolve:
+Lookup is nearest-first:
 
 ```txt
 goal > project > global
 ```
 
-Use qualified refs for cross-project or exact-scope references:
+Use qualified references when local names are not enough:
 
 ```txt
 task:<project>/<goal>/<task>
@@ -130,9 +145,9 @@ spec:<scope>/<id>
 knowledge:<scope>/<id>
 ```
 
-## Task Format
+## Tasks
 
-Each task is one Markdown file with frontmatter:
+A task is one Markdown file with frontmatter:
 
 ```yaml
 ---
@@ -165,9 +180,9 @@ Priorities:
 high normal low
 ```
 
-## Workflow Format
+## Workflows
 
-Workflows are YAML recipes in any overlay `workflows/` folder.
+Workflows are YAML files in any `workflows/` overlay.
 
 ```yaml
 name: dev
@@ -214,11 +229,11 @@ Top-level steps run sequentially. `parallel` groups run concurrently.
 
 Supported context aliases:
 
-- `repo:<path>` reads from the registered repo.
-- `task:current` renders the active task.
-- `specs:linked` renders task-linked specs.
-- `knowledge:global`, `knowledge:project`, `knowledge:goal` render scoped knowledge.
-- `runs:current` renders the current run folder.
+- `repo:<path>` reads from the registered repo
+- `task:current` renders the active task
+- `specs:linked` renders specs linked from task frontmatter
+- `knowledge:global`, `knowledge:project`, `knowledge:goal` render scoped knowledge
+- `runs:current` renders the current run folder
 
 Supported template variables:
 
@@ -231,16 +246,16 @@ Supported template variables:
 - `{{goal.id}}`
 - `{{run.path}}`
 
-## Agent Execution
+## Agent Commands
 
-Default agent commands are trusted local execution:
+Default execution is trusted local execution:
 
 ```sh
 codex exec --dangerously-bypass-approvals-and-sandbox -
 claude -p --permission-mode bypassPermissions
 ```
 
-Override binaries and args:
+Override binaries or args with environment variables:
 
 ```sh
 AGENT_BOARD_CODEX_BIN=/path/to/codex
@@ -249,15 +264,15 @@ AGENT_BOARD_CODEX_ARGS='exec --dangerously-bypass-approvals-and-sandbox -'
 AGENT_BOARD_CLAUDE_ARGS='-p --permission-mode bypassPermissions'
 ```
 
-Custom workflow agent names use:
+Custom agent names use:
 
 ```sh
 AGENT_BOARD_<AGENT_NAME>_BIN=/path/to/binary
 ```
 
-## Commands
+## Command Reference
 
-Project and goals:
+Projects and goals:
 
 ```sh
 agent-board init [--project <slug>]
@@ -314,77 +329,42 @@ agent-board skills install
 
 ## Bundled Workflows
 
-`agent-board init` installs default workflow YAML into the global overlay:
+`init` installs these workflows into the global overlay:
 
-- `research`: inspect repo context and create findings/specs/tasks.
-- `triage`: break a goal into tasks, blockers, and parallel lanes.
-- `dev`: implement with review/validation sidecars and finalization.
-- `validate`: focused review/test pass with follow-up task creation.
-
-## Bundled Skill
-
-`agent-board skills install` links one skill globally:
-
-```txt
-~/.claude/skills/agent-board -> ~/.agent-board/skills/agent-board
-~/.agents/skills/agent-board -> ~/.agent-board/skills/agent-board
-```
-
-The skill has compact references:
-
-```txt
-SKILL.md
-AGENTS.md
-references/config.md
-references/pm-orchestrator.md
-references/task-workflow.md
-references/research-workflow.md
-references/review-workflow.md
-```
-
-The installer never overwrites unsafe existing paths.
-
-## PM Workflow
-
-Recommended operating loop for an agent acting as PM:
-
-1. Run `agent-board status` and `agent-board plan --related`.
-2. Confirm the active goal with `agent-board goals`.
-3. For vague work, run `research` or `triage`.
-4. Create specs for durable reasoning.
-5. Create small tasks and link dependencies.
-6. Delegate implementation through `agent-board run <task> --workflow dev`.
-7. Inspect `agent-board runs` and `agent-board logs <run-id>`.
-8. Create follow-up tasks for real review findings.
-9. Mark tasks `done` only when criteria are satisfied.
+- `research`: inspect repo context and create findings/specs/tasks
+- `triage`: break a goal into tasks, blockers, and parallel lanes
+- `dev`: implement with review/validation sidecars
+- `validate`: focused review/test pass with follow-up task creation
 
 ## Agent Modes
 
-The bundled skill nudges agents into two modes:
+The bundled skill nudges agents into two modes.
 
-- `orchestrator` mode is the default for PM sessions. The agent plans, writes specs, creates tasks, links blockers, runs workflows, observes outputs, and updates board state. It should not claim or implement tasks itself unless explicitly asked.
-- `worker` mode starts when the user directly asks the current agent to implement/fix something, or when a workflow prompt spawns the agent for a concrete task. The worker claims the task, edits files, runs checks, and updates task state.
+In `orchestrator` mode, the agent plans work, writes specs, creates tasks, links dependencies, runs workflows, reads logs, and updates the board. It should not implement tasks itself unless asked.
 
-This is the intended control loop:
+In `worker` mode, the agent has a concrete task. It claims the task, edits files, runs checks, and updates task state.
+
+Typical orchestrator loop:
 
 ```sh
+agent-board status
 agent-board plan --related
 agent-board run <ready-task> --workflow dev
 agent-board runs <ready-task>
 agent-board logs <run-id-or-prefix>
 ```
 
-The runner is foreground in V1: `run` prints the run id as soon as the run folder exists, streams worker output to the terminal, stores step logs, then prints completion. `logs` accepts the full run id or a unique prefix. Background supervision can be added later.
+The V1 runner is foreground: it streams worker output, stores logs, and exits when the workflow exits. Background supervision is intentionally not part of the first cut.
 
 ## Migration
 
-For older flat layouts:
+Older flat layouts can be copied into `goals/main`:
 
 ```sh
 agent-board migrate --project <slug>
 ```
 
-Migration copies old `tasks`, `specs`, `knowledge`, `runs`, and `workflows` into `goals/main` and rewrites legacy `.agent/*` workflow context aliases where safe. Existing `.agent` symlinks are ignored, not removed.
+The command copies old `tasks`, `specs`, `knowledge`, `runs`, and `workflows`, and rewrites legacy `.agent/*` workflow context aliases where safe. It ignores existing `.agent` symlinks.
 
 ## Development
 
@@ -394,7 +374,7 @@ bun run check-types
 bun test
 ```
 
-The test suite covers frontmatter parsing, task graph linking, overlays, workflow prompt rendering, fake-agent workflow runs, global skills install, related project planning, and migration.
+The tests cover frontmatter parsing, task graph links, overlays, prompt rendering, fake-agent workflow runs, global skill install, related project planning, and migration.
 
 ## License
 
