@@ -1,0 +1,40 @@
+{
+	"name": "agent-board",
+	"version": "0.1.0",
+	"description": "Markdown task board and workflow runner for coding agents",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/drepkovsky/agent-board.git"
+	},
+	"bugs": {
+		"url": "https://github.com/drepkovsky/agent-board/issues"
+	},
+	"homepage": "https://github.com/drepkovsky/agent-board#readme",
+	"keywords": [
+		"agents",
+		"codex",
+		"claude",
+		"cli",
+		"markdown",
+		"task-management",
+		"workflows"
+	],
+	"type": "module",
+	"bin": {
+		"agent-board": "./src/index.ts",
+		"agent": "./src/index.ts"
+	},
+	"scripts": {
+		"check-types": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"commander": "^14.0.2"
+	},
+	"devDependencies": {
+		"bun-types": "latest",
+		"typescript": "^5.9.2"
+	},
+	"packageManager": "bun@1.3.13"
+}
