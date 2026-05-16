@@ -303,7 +303,7 @@ Workflows and runs:
 agent-board workflows
 agent-board run <task-id> [--workflow <name>] [--agent <codex|claude>]
 agent-board runs [<task-id>]
-agent-board logs <run-id> [--step <step-id>]
+agent-board logs <run-id-or-prefix> [--step <step-id>]
 ```
 
 Skills:
@@ -371,10 +371,10 @@ This is the intended control loop:
 agent-board plan --related
 agent-board run <ready-task> --workflow dev
 agent-board runs <ready-task>
-agent-board logs <run-id>
+agent-board logs <run-id-or-prefix>
 ```
 
-The runner is foreground in V1: the orchestrator starts the worker process, streams output, stores logs, then decides the next action from the run folder. Background supervision can be added later.
+The runner is foreground in V1: `run` prints the run id as soon as the run folder exists, streams worker output to the terminal, stores step logs, then prints completion. `logs` accepts the full run id or a unique prefix. Background supervision can be added later.
 
 ## Migration
 

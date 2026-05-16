@@ -160,7 +160,7 @@ Use when managing project goals, tasks, specs, knowledge, workflow runs, or agen
 ## Recipes
 
 - New slice: \`status\` -> \`goals\` -> \`goal new/use\` -> \`spec new\` -> \`new\` tasks -> \`link\` dependencies -> mark ready work.
-- Delegate next task: \`plan --related\` -> choose ready task -> \`run <task> --workflow dev|research|validate\` -> inspect \`runs\`/\`logs\`.
+- Delegate next task: \`plan --related\` -> choose ready task -> \`run <task> --workflow dev|research|validate\` -> inspect \`runs\`/\`logs <run-id-or-prefix>\`.
 - After worker run: read logs, update specs/knowledge/tasks, create follow-ups, unblock/ready/done only with evidence.
 - Blocker: \`block <task> "<reason>"\`, create dependency or question task, re-run \`plan --related\`.
 
@@ -343,6 +343,7 @@ For workflow changes, create a small ready task and run a smoke test:
 agent-board new "Smoke test" --status ready
 agent-board run smoke-test --workflow dev
 agent-board runs smoke-test
+agent-board logs <run-id-or-prefix>
 \`\`\`
 `;
 
@@ -369,7 +370,7 @@ Use this reference in worker mode. If you are acting as PM/orchestrator, prefer 
 2. Run \`agent-board next\` or inspect \`agent-board tasks\`.
 3. Claim work before editing: \`agent-board claim <task-id> --agent <your-name>\`.
 4. Prefer \`agent-board run <task-id> --workflow dev\` when a workflow is available.
-5. Inspect sidecar outputs with \`agent-board runs\` and \`agent-board logs <run-id>\`.
+5. Inspect sidecar outputs with \`agent-board runs\` and \`agent-board logs <run-id-or-prefix>\`.
 6. If blocked, run \`agent-board block <task-id> "<reason>"\`.
 7. When done, verify acceptance criteria and run \`agent-board done <task-id>\`.
 
@@ -392,7 +393,7 @@ PM owns focus/state, not hidden implementation. Clarify goals, create specs/task
 6. Use \`agent-board link <from> --blocks <to>\` for ordering.
 7. Use \`agent-board link <task> --spec <spec>\` to keep context attached.
 8. Delegate execution through workflows instead of doing all work directly.
-9. Inspect \`agent-board runs\` and \`agent-board logs <run-id>\` before deciding next steps.
+9. Inspect \`agent-board runs\` and \`agent-board logs <run-id-or-prefix>\` before deciding next steps.
 10. Create follow-up tasks for actionable review findings.
 
 Recipes: for new slices create goal/spec/tasks/dependencies; for ready work run \`agent-board run <task> --workflow dev|research|validate\`; after runs inspect logs, update board state, create follow-ups, and only then mark ready/done.

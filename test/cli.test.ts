@@ -54,6 +54,8 @@ describe("cli", () => {
 			"--workflow",
 			"dev",
 		]);
+		expect(output).toContain("Run started:");
+		expect(output).toContain("Logs: agent-board logs");
 		expect(output).toContain("Run completed");
 
 		const runs = await run(cwd, env, ["runs", "add-cli"]);
@@ -65,6 +67,8 @@ describe("cli", () => {
 		);
 		expect(task).toContain('status: "in_progress"');
 		const runId = (await readdir(join(home, "projects", "demo", "goals", "main", "runs")))[0]!;
+		const logs = await run(cwd, env, ["logs", runId.slice(0, 16), "--step", "implement"]);
+		expect(logs).toContain("codex called");
 		const prompt = await readFile(
 			join(
 				home,

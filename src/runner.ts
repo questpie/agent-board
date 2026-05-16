@@ -29,6 +29,9 @@ export async function runWorkflow(input: {
 		steps: [],
 	};
 	await writeRunState(runPath, state);
+	console.log(`Run started: ${state.id}`);
+	console.log(`Run path: ${runPath}`);
+	console.log(`Logs: agent-board logs ${state.id}`);
 
 	try {
 		for (const item of input.workflow.steps) {

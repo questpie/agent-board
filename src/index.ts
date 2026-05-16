@@ -518,11 +518,11 @@ program
 	.command("logs")
 	.argument("<run-id>")
 	.option("--step <step-id>", "Step id")
-	.description("Show run logs")
+	.description("Show run logs by full run id or unique prefix")
 	.action(async (runId, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
-			const runPath = join(runsDir(workspace), runId);
+			const runPath = await resolveRunPath(workspace, runId);
 			const run = JSON.parse(await readFile(join(runPath, "run.json"), "utf-8")) as {
 				steps: { id: string; stdoutPath: string; stderrPath: string }[];
 			};
@@ -637,6 +637,19 @@ function resolveDependencyKey(workspace: Workspace, ref: string): string {
 
 function taskKey(workspace: Workspace, id: string): string {
 	return `task:${workspace.projectSlug}/${workspace.goalSlug}/${id}`;
+}
+
+async function resolveRunPath(workspace: Workspace, runRef: string): Promise<string> {
+	const { readdir } = await import("node:fs/promises");
+	const dir = runsDir(workspace);
+	const entries = await readdir(dir).catch(() => [] as string[]);
+	if (entries.includes(runRef)) return join(dir, runRef);
+	const matches = entries.filter((entry) => entry.startsWith(runRef));
+	if (matches.length === 1) return join(dir, matches[0]!);
+	if (matches.length > 1) {
+		throw new Error(`Run id prefix is ambiguous: ${runRef}\n${matches.join("\n")}`);
+	}
+	throw new Error(`Run not found: ${runRef}`);
 }
 
 async function main(fn: () => Promise<void>): Promise<void> {
