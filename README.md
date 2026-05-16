@@ -2,13 +2,13 @@
 
 A small Markdown task board and workflow runner for coding agents.
 
-`agent-board` gives Codex, Claude Code, and similar agents a shared place to keep track of work: goals, tasks, specs, knowledge, workflow recipes, and run logs. Everything is plain text under `~/.agent-board`; your repository does not need a `.agent` folder.
+`agent-board` gives Codex, Claude Code, and similar agents a shared place to keep track of work: goals, tasks, specs, knowledge, workflow recipes, and run logs. Everything is plain text under `~/.agent-board`, with repositories registered by path.
 
-It is deliberately simple. No database, no daemon, no hosted service. The CLI owns state. Skills tell agents how to behave. Workflows describe which agents should run and in what order.
+It is a small local system: the CLI owns state, skills guide agent behavior, and workflows describe which agents should run and in what order.
 
 ## Why
 
-Chat is a poor source of truth for multi-step coding work. A plan gets discussed, a blocker appears, a review finds follow-up work, and after a few turns nobody has a durable map of what is actually next.
+Multi-step coding work needs a durable map. A plan gets discussed, a blocker appears, a review finds follow-up work, and the next useful action should still be clear tomorrow.
 
 `agent-board` keeps that map on disk:
 
@@ -19,7 +19,7 @@ Chat is a poor source of truth for multi-step coding work. A plan gets discussed
 - `workflows` run Codex/Claude steps from YAML
 - `runs` store prompts, logs, and summaries
 
-This is not a sandbox or approval system. It runs local agents with local privileges. Treat it as a project memory and orchestration layer.
+It runs local agents with your configured CLI permissions. Treat it as a project memory and orchestration layer.
 
 ## Install
 
@@ -137,7 +137,7 @@ Lookup is nearest-first:
 goal > project > global
 ```
 
-Use qualified references when local names are not enough:
+Use qualified references for cross-project or exact-scope links:
 
 ```txt
 task:<project>/<goal>/<task>
@@ -340,7 +340,7 @@ agent-board skills install
 
 The bundled skill nudges agents into two modes.
 
-In `orchestrator` mode, the agent plans work, writes specs, creates tasks, links dependencies, runs workflows, reads logs, and updates the board. It should not implement tasks itself unless asked.
+In `orchestrator` mode, the agent plans work, writes specs, creates tasks, links dependencies, runs workflows, reads logs, and updates the board. Implementation happens through workflow runs or through an explicit worker request.
 
 In `worker` mode, the agent has a concrete task. It claims the task, edits files, runs checks, and updates task state.
 
@@ -354,7 +354,7 @@ agent-board runs <ready-task>
 agent-board logs <run-id-or-prefix>
 ```
 
-The V1 runner is foreground: it streams worker output, stores logs, and exits when the workflow exits. Background supervision is intentionally not part of the first cut.
+The V1 runner is foreground: it streams worker output, stores logs, and exits when the workflow exits. Background supervision is a later extension.
 
 ## Migration
 
@@ -364,7 +364,7 @@ Older flat layouts can be copied into `goals/main`:
 agent-board migrate --project <slug>
 ```
 
-The command copies old `tasks`, `specs`, `knowledge`, `runs`, and `workflows`, and rewrites legacy `.agent/*` workflow context aliases where safe. It ignores existing `.agent` symlinks.
+The command copies old `tasks`, `specs`, `knowledge`, `runs`, and `workflows`, and rewrites legacy `.agent/*` workflow context aliases where safe. Existing `.agent` symlinks are left untouched.
 
 ## Development
 
