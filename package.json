@@ -5,12 +5,12 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/drepkovsky/agent-board.git"
+		"url": "git+https://github.com/questpie/agent-board.git"
 	},
 	"bugs": {
-		"url": "https://github.com/drepkovsky/agent-board/issues"
+		"url": "https://github.com/questpie/agent-board/issues"
 	},
-	"homepage": "https://github.com/drepkovsky/agent-board#readme",
+	"homepage": "https://github.com/questpie/agent-board#readme",
 	"keywords": [
 		"agents",
 		"codex",
