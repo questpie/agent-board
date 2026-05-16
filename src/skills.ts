@@ -152,9 +152,21 @@ Use when managing project goals, tasks, specs, knowledge, workflow runs, or agen
 5. Delegate via workflows; inspect runs/logs before next decisions.
 6. Store reasoning in specs and reusable facts in knowledge.
 
+## Modes
+
+- Orchestrator mode is default: plan, create specs/tasks, link blockers, run workflows, inspect logs, decide next steps. Do not claim or edit implementation tasks unless the user explicitly asks you to work as the worker.
+- Worker mode starts only when the user asks you to implement/fix directly or a workflow prompt gives you a concrete task role/intent. Then claim, execute, verify, and update task state.
+
+## Recipes
+
+- New slice: \`status\` -> \`goals\` -> \`goal new/use\` -> \`spec new\` -> \`new\` tasks -> \`link\` dependencies -> mark ready work.
+- Delegate next task: \`plan --related\` -> choose ready task -> \`run <task> --workflow dev|research|validate\` -> inspect \`runs\`/\`logs\`.
+- After worker run: read logs, update specs/knowledge/tasks, create follow-ups, unblock/ready/done only with evidence.
+- Blocker: \`block <task> "<reason>"\`, create dependency or question task, re-run \`plan --related\`.
+
 ## Operating Rules
 
-- Use \`agent-board claim <task-id> --agent <name>\` before implementation.
+- In worker mode, use \`agent-board claim <task-id> --agent <name>\` before implementation.
 - Use \`agent-board link <from> --blocks <to>\` for dependencies.
 - Use \`agent-board block <task-id> "<reason>"\` for missing info or unmet dependencies.
 - Keep task files concise; logs belong in run folders.
@@ -179,9 +191,10 @@ Use when managing project goals, tasks, specs, knowledge, workflow runs, or agen
 export const skillAgents = `# Agent Board Rules
 
 - Start with \`agent-board status\`; use \`agent-board plan --related\` for cross-project blockers.
+- Default to orchestrator mode: do not claim/edit implementation tasks unless explicitly asked or spawned as a workflow worker.
+- Delegate ready work with \`agent-board run <task-id> --workflow <name>\`; inspect \`runs\` and \`logs\` before deciding next steps.
 - Read task + linked specs/knowledge before editing.
-- Claim before implementation; block with a concrete reason when stuck.
-- Prefer \`agent-board run <task-id> --workflow dev\` for delegated work.
+- In worker mode, claim before implementation; block with a concrete reason when stuck.
 - Write durable decisions to specs, reusable facts/gotchas to knowledge.
 - Keep task Markdown concise; logs stay in run folders.
 `;
@@ -350,6 +363,8 @@ Use this reference when picking up, running, blocking, reviewing, or closing a t
 
 A task is the smallest executable unit. It should be concrete enough to claim, read context, edit, check, and report without inventing the plan.
 
+Use this reference in worker mode. If you are acting as PM/orchestrator, prefer \`agent-board run <task-id> --workflow <name>\` instead of doing the task yourself.
+
 1. Run \`agent-board status\` to understand current work.
 2. Run \`agent-board next\` or inspect \`agent-board tasks\`.
 3. Claim work before editing: \`agent-board claim <task-id> --agent <your-name>\`.
@@ -367,7 +382,7 @@ export const pmOrchestratorSkillReadme = `# PM Orchestrator
 
 Use this skill when acting as the project manager for a repository.
 
-PM owns focus/state, not hidden implementation. Clarify goals, create specs/tasks, link blockers, run workflows, inspect outputs, and choose next work from board state.
+PM owns focus/state, not hidden implementation. Clarify goals, create specs/tasks, link blockers, run workflows, inspect outputs, and choose next work from board state. Do not claim/implement a task yourself unless the user explicitly asks you to switch into worker mode.
 
 1. Start with \`agent-board status\` and \`agent-board plan\`.
 2. Use \`agent-board goals\` to confirm the active slice.
@@ -379,6 +394,8 @@ PM owns focus/state, not hidden implementation. Clarify goals, create specs/task
 8. Delegate execution through workflows instead of doing all work directly.
 9. Inspect \`agent-board runs\` and \`agent-board logs <run-id>\` before deciding next steps.
 10. Create follow-up tasks for actionable review findings.
+
+Recipes: for new slices create goal/spec/tasks/dependencies; for ready work run \`agent-board run <task> --workflow dev|research|validate\`; after runs inspect logs, update board state, create follow-ups, and only then mark ready/done.
 
 Triage rules: ready tasks are independently executable; blocked tasks need concrete blockers; parallel lanes are independent ready tasks; cross-project blockers use qualified refs + \`agent-board plan --related\`; specs explain why, tasks explain what next.
 `;

@@ -358,6 +358,24 @@ Recommended operating loop for an agent acting as PM:
 8. Create follow-up tasks for real review findings.
 9. Mark tasks `done` only when criteria are satisfied.
 
+## Agent Modes
+
+The bundled skill nudges agents into two modes:
+
+- `orchestrator` mode is the default for PM sessions. The agent plans, writes specs, creates tasks, links blockers, runs workflows, observes outputs, and updates board state. It should not claim or implement tasks itself unless explicitly asked.
+- `worker` mode starts when the user directly asks the current agent to implement/fix something, or when a workflow prompt spawns the agent for a concrete task. The worker claims the task, edits files, runs checks, and updates task state.
+
+This is the intended control loop:
+
+```sh
+agent-board plan --related
+agent-board run <ready-task> --workflow dev
+agent-board runs <ready-task>
+agent-board logs <run-id>
+```
+
+The runner is foreground in V1: the orchestrator starts the worker process, streams output, stores logs, then decides the next action from the run folder. Background supervision can be added later.
+
 ## Migration
 
 For older flat layouts:
