@@ -1,9 +1,11 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { gitState } from "./git.js";
 import { parseFrontmatter, stringifyFrontmatter } from "./markdown.js";
 import { PRIORITIES, STATUSES, type TaskFile, type TaskMeta, type TaskPriority, type TaskStatus, type Workspace } from "./types.js";
-import { listFiles, nowIso, uniqueSlug } from "./utils.js";
+import { atomicWrite, listFiles, nowIso, uniqueSlug } from "./utils.js";
+import { parseVerifyCommands } from "./verify.js";
 import { taskDir, workspaceForGoal } from "./workspace.js";
 
 const TASK_ORDER = [
@@ -13,6 +15,7 @@ const TASK_ORDER = [
 	"priority",
 	"assignee",
 	"workflow",
+	"branch",
 	"skills",
 	"specs",
 	"depends_on",
@@ -21,6 +24,8 @@ const TASK_ORDER = [
 	"relates_to",
 	"created",
 	"updated",
+	"verified",
+	"verified_sha",
 ];
 
 export async function listTasks(workspace: Workspace): Promise<TaskFile[]> {
@@ -45,6 +50,7 @@ export async function createTask(
 		priority,
 		assignee: "",
 		workflow: "",
+		branch: "",
 		skills: [],
 		specs: [],
 		depends_on: [],
@@ -53,8 +59,10 @@ export async function createTask(
 		relates_to: [],
 		created: timestamp,
 		updated: timestamp,
+		verified: "",
+		verified_sha: "",
 	};
-	const body = `## Goal\n\nDescribe the desired outcome.\n\n## Acceptance Criteria\n\n- [ ] Define success criteria.\n`;
+	const body = `## Goal\n\nDescribe the desired outcome.\n\n## Acceptance Criteria\n\n- [ ] Define success criteria.\n\n## Verify\n\n<!-- Put one shell command per line inside a sh code block. \`agent-board verify\` runs these from the repo root before done. Leave empty to skip the verify gate. -->\n`;
 	const task = { path: join(tasksDir, `${id}.md`), meta, body };
 	await writeTaskFile(task);
 	return task;
@@ -121,14 +129,36 @@ export async function setTaskStatus(
 	workspace: Workspace,
 	id: string,
 	status: string,
-	options: { assignee?: string; blockReason?: string; force?: boolean } = {},
+	options: { assignee?: string; blockReason?: string; force?: boolean; reason?: string } = {},
 ): Promise<TaskFile> {
 	const task = await getTask(workspace, id);
 	const nextStatus = parseStatus(status);
-	if (nextStatus === "done" && !options.force && hasUncheckedCriteria(task.body)) {
-		throw new Error(
-			`Task ${id} still has unchecked acceptance criteria. Use --force to close anyway.`,
-		);
+	if (nextStatus === "done") {
+		const uncheckedCriteria = hasUncheckedCriteria(task.body);
+		const unverified = parseVerifyCommands(task.body).length > 0 && !task.meta.verified;
+		if (!options.force) {
+			if (uncheckedCriteria) {
+				throw new Error(
+					`Task ${id} still has unchecked acceptance criteria. Use --force --reason "<why>" to close anyway.`,
+				);
+			}
+			if (unverified) {
+				throw new Error(
+					`Task ${id} defines verify commands but has no recorded pass. Run \`agent-board verify ${id}\`, or close with --force --reason "<why>".`,
+				);
+			}
+		} else if (uncheckedCriteria || unverified) {
+			if (!options.reason) {
+				throw new Error(
+					`Forcing ${id} done requires --reason "<why>" (unchecked criteria or unverified).`,
+				);
+			}
+			const who = task.meta.assignee ? ` by ${task.meta.assignee}` : "";
+			task.body = appendEvidence(
+				task.body,
+				`- [forced] done ${nowIso()}${who}: ${options.reason}`,
+			);
+		}
 	}
 	task.meta.status = nextStatus;
 	task.meta.updated = nowIso();
@@ -141,6 +171,90 @@ export async function setTaskStatus(
 	return task;
 }
 
+export async function claimTask(
+	workspace: Workspace,
+	id: string,
+	options: { agent: string; allowDetached?: boolean },
+): Promise<{ task: TaskFile; warnings: string[] }> {
+	const taskPath = join(taskDir(workspace), `${id}.md`);
+	return withTaskLock(taskPath, async () => {
+		const task = await getTask(workspace, id);
+		const warnings: string[] = [];
+
+		if (task.meta.status === "done") {
+			throw new Error(`Task ${id} is already done.`);
+		}
+		if (task.meta.status === "blocked") {
+			throw new Error(`Task ${id} is blocked. Run \`agent-board unblock ${id}\` first.`);
+		}
+		if (
+			task.meta.status === "in_progress" &&
+			task.meta.assignee &&
+			task.meta.assignee !== options.agent
+		) {
+			throw new Error(`Task ${id} is already claimed by ${task.meta.assignee}.`);
+		}
+
+		const unmet = await unmetDependencies(workspace, task);
+		if (unmet.length) {
+			throw new Error(`Task ${id} has unfinished dependencies: ${unmet.join(", ")}`);
+		}
+
+		const state = await gitState(workspace.repoPath);
+		if (state.isRepo) {
+			if (state.detached && !options.allowDetached) {
+				throw new Error(
+					`Refusing to claim ${id} on a detached HEAD. Checkout a branch or pass --allow-detached.`,
+				);
+			}
+			if (state.dirty) warnings.push("Working tree is dirty.");
+			if (task.meta.branch && state.branch && state.branch !== task.meta.branch) {
+				warnings.push(`On branch ${state.branch}, but task targets ${task.meta.branch}.`);
+			}
+		}
+
+		const claimed = await setTaskStatus(workspace, id, "in_progress", {
+			assignee: options.agent,
+		});
+		return { task: claimed, warnings };
+	});
+}
+
+// Mutual-exclusion lock for the claim read-check-write so two agents racing on
+// the same task cannot both win. O_EXCL create fails for the loser.
+async function withTaskLock<T>(taskPath: string, fn: () => Promise<T>): Promise<T> {
+	const lockPath = `${taskPath}.lock`;
+	const existing = await stat(lockPath).catch(() => null);
+	if (existing && Date.now() - existing.mtimeMs > 30_000) {
+		await unlink(lockPath).catch(() => {});
+	}
+	let handle: Awaited<ReturnType<typeof open>>;
+	try {
+		handle = await open(lockPath, "wx");
+	} catch {
+		throw new Error("Task is being claimed by another agent (lock held). Retry shortly.");
+	}
+	try {
+		return await fn();
+	} finally {
+		await handle.close();
+		await unlink(lockPath).catch(() => {});
+	}
+}
+
+async function unmetDependencies(
+	workspace: Workspace,
+	task: TaskFile,
+): Promise<string[]> {
+	const unmet: string[] = [];
+	for (const dep of task.meta.depends_on) {
+		const ref = resolveTaskRef(workspace, dep);
+		const depTask = await getTask(ref.workspace, ref.id).catch(() => null);
+		if (!depTask || depTask.meta.status !== "done") unmet.push(dep);
+	}
+	return unmet;
+}
+
 export async function readTaskFile(path: string): Promise<TaskFile> {
 	const content = await readFile(path, "utf-8");
 	const doc = parseFrontmatter<Record<string, unknown>>(content);
@@ -149,7 +263,7 @@ export async function readTaskFile(path: string): Promise<TaskFile> {
 }
 
 export async function writeTaskFile(task: TaskFile): Promise<void> {
-	await writeFile(
+	await atomicWrite(
 		task.path,
 		stringifyFrontmatter(task.meta as unknown as Record<string, unknown>, task.body, TASK_ORDER),
 	);
@@ -229,6 +343,7 @@ function normalizeTaskMeta(
 		priority: parsePriority(String(raw.priority)),
 		assignee: typeof raw.assignee === "string" ? raw.assignee : "",
 		workflow: typeof raw.workflow === "string" ? raw.workflow : "",
+		branch: typeof raw.branch === "string" ? raw.branch : "",
 		skills: arrayOfStrings(raw.skills),
 		specs: arrayOfStrings(raw.specs),
 		depends_on: arrayOfStrings(raw.depends_on),
@@ -237,6 +352,8 @@ function normalizeTaskMeta(
 		relates_to: arrayOfStrings(raw.relates_to),
 		created: String(raw.created),
 		updated: String(raw.updated),
+		verified: typeof raw.verified === "string" ? raw.verified : "",
+		verified_sha: typeof raw.verified_sha === "string" ? raw.verified_sha : "",
 	};
 }
 
@@ -251,6 +368,14 @@ function hasUncheckedCriteria(body: string): boolean {
 
 function appendSection(body: string, title: string, value: string): string {
 	return `${body.trimEnd()}\n\n## ${title}\n\n${value}\n`;
+}
+
+export function appendEvidence(body: string, entry: string): string {
+	const trimmed = body.trimEnd();
+	if (/(^|\n)##\s+Evidence\b/.test(trimmed)) {
+		return `${trimmed}\n\n${entry}\n`;
+	}
+	return `${trimmed}\n\n## Evidence\n\n${entry}\n`;
 }
 
 function unique(values: string[]): string[] {

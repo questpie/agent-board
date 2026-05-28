@@ -1,6 +1,6 @@
 {
 	"name": "agent-board",
-	"version": "0.1.0",
+	"version": "0.2.1",
 	"description": "Markdown task board and workflow runner for coding agents",
 	"license": "MIT",
 	"repository": {

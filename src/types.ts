@@ -20,6 +20,7 @@ export interface TaskMeta {
 	priority: TaskPriority;
 	assignee: string;
 	workflow: string;
+	branch: string;
 	skills: string[];
 	specs: string[];
 	depends_on: string[];
@@ -28,6 +29,8 @@ export interface TaskMeta {
 	relates_to: string[];
 	created: string;
 	updated: string;
+	verified: string;
+	verified_sha: string;
 }
 
 export interface TaskFile {

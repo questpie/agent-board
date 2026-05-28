@@ -3,11 +3,13 @@ import { copyFile, mkdir, readdir, readFile, symlink, writeFile } from "node:fs/
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace } from "./types.js";
-import { ensureDir, getHomeRoot, nowIso, projectSlugFromCwd, slugify } from "./utils.js";
+import { atomicWrite, ensureDir, getHomeRoot, nowIso, projectSlugFromCwd, slugify } from "./utils.js";
 import {
 	configSkillReadme,
 	defaultWorkflow,
 	pmOrchestratorSkillReadme,
+	researchSkillAgents,
+	researchSkillReadme,
 	researchWorkflow,
 	researchWorkflowSkillReadme,
 	reviewWorkflowSkillReadme,
@@ -16,9 +18,15 @@ import {
 	taskWorkflowReference,
 	triageWorkflow,
 	validateWorkflow,
+	workerSkillAgents,
+	workerSkillReadme,
 } from "./skills.js";
 
 const DEFAULT_GOAL = "main";
+
+export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research"] as const;
+
+const SKILL_RUNTIMES = ["claude", "agents", "cursor"] as const;
 
 export interface ResolveWorkspaceOptions {
 	projectSlug?: string;
@@ -95,7 +103,7 @@ export function resolveWorkspace(
 		root,
 		projectSlug,
 		projectPath,
-		repoPath: project.repo_path,
+		repoPath: process.env.AGENT_BOARD_REPO ? resolve(process.env.AGENT_BOARD_REPO) : project.repo_path,
 		goalSlug,
 		goalPath,
 		cwd,
@@ -185,10 +193,41 @@ export async function installGlobalSkills(): Promise<string[]> {
 	const warnings: string[] = [];
 	await ensureRootLayout(root);
 	await installBundledSkills(root);
-	const skillRoot = join(root, "skills", "agent-board");
-	await linkIfSafe(skillRoot, join(homedir(), ".claude", "skills", "agent-board"), warnings);
-	await linkIfSafe(skillRoot, join(homedir(), ".agents", "skills", "agent-board"), warnings);
+	for (const skill of BUNDLED_SKILLS) {
+		const skillRoot = join(root, "skills", skill);
+		for (const runtime of SKILL_RUNTIMES) {
+			await linkIfSafe(skillRoot, join(homedir(), `.${runtime}`, "skills", skill), warnings);
+		}
+	}
 	return warnings;
+}
+
+export interface SkillLinkStatus {
+	skill: string;
+	runtime: string;
+	path: string;
+	state: "linked" | "missing" | "other";
+}
+
+export async function skillsDoctor(): Promise<SkillLinkStatus[]> {
+	const root = getHomeRoot();
+	const statuses: SkillLinkStatus[] = [];
+	for (const skill of BUNDLED_SKILLS) {
+		const target = join(root, "skills", skill);
+		for (const runtime of SKILL_RUNTIMES) {
+			const linkPath = join(homedir(), `.${runtime}`, "skills", skill);
+			let state: SkillLinkStatus["state"] = "missing";
+			if (existsSync(linkPath)) {
+				const stat = lstatSync(linkPath);
+				state =
+					stat.isSymbolicLink() && resolve(dirname(linkPath), readlinkSync(linkPath)) === target
+						? "linked"
+						: "other";
+			}
+			statuses.push({ skill, runtime, path: linkPath, state });
+		}
+	}
+	return statuses;
 }
 
 export async function migrateWorkspace(
@@ -289,6 +328,16 @@ async function installBundledSkills(root: string): Promise<void> {
 	await writeBundledSkill(join(skillRoot, "references", "task-workflow.md"), taskWorkflowReference);
 	await writeBundledSkill(join(skillRoot, "references", "research-workflow.md"), researchWorkflowSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "review-workflow.md"), reviewWorkflowSkillReadme);
+
+	const workerRoot = join(root, "skills", "agent-board-worker");
+	await ensureDir(workerRoot);
+	await writeBundledSkill(join(workerRoot, "SKILL.md"), workerSkillReadme);
+	await writeBundledSkill(join(workerRoot, "AGENTS.md"), workerSkillAgents);
+
+	const researchRoot = join(root, "skills", "agent-board-research");
+	await ensureDir(researchRoot);
+	await writeBundledSkill(join(researchRoot, "SKILL.md"), researchSkillReadme);
+	await writeBundledSkill(join(researchRoot, "AGENTS.md"), researchSkillAgents);
 }
 
 async function readProjectConfig(projectPath: string): Promise<ProjectConfig> {
@@ -304,7 +353,7 @@ function readProjectConfigSync(projectPath: string): ProjectConfig {
 }
 
 async function writeProjectConfig(projectPath: string, project: ProjectConfig): Promise<void> {
-	await writeFile(join(projectPath, "project.json"), JSON.stringify(project, null, 2));
+	await atomicWrite(join(projectPath, "project.json"), JSON.stringify(project, null, 2));
 }
 
 async function readRegistry(root: string): Promise<Registry> {
@@ -322,7 +371,7 @@ function readRegistrySync(root: string): Registry {
 async function upsertRegistryProject(root: string, project: RegistryProject): Promise<void> {
 	const registry = await readRegistry(root);
 	registry.projects[project.slug] = project;
-	await writeFile(join(root, "registry.json"), JSON.stringify(registry, null, 2));
+	await atomicWrite(join(root, "registry.json"), JSON.stringify(registry, null, 2));
 }
 
 function resolveProjectSlug(root: string, cwd: string): string {
@@ -397,9 +446,9 @@ async function readGoalTitle(path: string, fallback: string): Promise<string> {
 
 async function writeIfMissing(path: string, content: string): Promise<void> {
 	if (existsSync(path)) return;
-	await writeFile(path, content);
+	await atomicWrite(path, content);
 }
 
 async function writeBundledSkill(path: string, content: string): Promise<void> {
-	await writeFile(path, content);
+	await atomicWrite(path, content);
 }

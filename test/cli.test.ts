@@ -37,7 +37,11 @@ describe("cli", () => {
 			"validate.yml",
 		]);
 		expect((await readdir(join(home, "projects", "demo", "goals", "main"))).sort()).toContain("tasks");
-		expect((await readdir(join(home, "skills"))).sort()).toEqual(["agent-board"]);
+		expect((await readdir(join(home, "skills"))).sort()).toEqual([
+			"agent-board",
+			"agent-board-research",
+			"agent-board-worker",
+		]);
 		expect(
 			(await readdir(join(home, "skills", "agent-board", "references"))).sort(),
 		).toEqual([
@@ -198,6 +202,9 @@ describe("cli", () => {
 		expect(await readFile(join(osHome, ".claude", "skills", "agent-board"), "utf-8")).toBe("mine");
 		const agentsLink = join(osHome, ".agents", "skills", "agent-board");
 		expect(lstatSync(agentsLink).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board")).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-worker")).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board-research")).isSymbolicLink()).toBe(true);
 	});
 
 	test("migrates old flat project data into the main goal", async () => {
@@ -248,6 +255,102 @@ steps:
 		expect(workflow).toContain("specs:goal");
 		expect(workflow).toContain("knowledge:goal");
 	});
+
+	test("claim guards detached HEAD and unfinished dependencies", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-git-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await gitInit(cwd);
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Blocker", "--status", "ready"]);
+		await run(cwd, env, ["new", "Dependent", "--status", "ready"]);
+		await run(cwd, env, ["new", "Solo", "--status", "ready"]);
+		await run(cwd, env, ["link", "blocker", "--blocks", "dependent"]);
+
+		const depFail = await runFail(cwd, env, ["claim", "dependent", "--agent", "w"]);
+		expect(depFail).toContain("unfinished dependencies");
+		expect(depFail).toContain("blocker");
+
+		expect(await run(cwd, env, ["claim", "blocker", "--agent", "w"])).toContain("Claimed blocker");
+
+		await gitDetach(cwd);
+		const detachedFail = await runFail(cwd, env, ["claim", "solo", "--agent", "w"]);
+		expect(detachedFail).toContain("detached");
+		expect(await run(cwd, env, ["claim", "solo", "--agent", "w", "--allow-detached"])).toContain(
+			"Claimed solo",
+		);
+	});
+
+	test("verify gate blocks done until pass, and force requires a reason", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-verify-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await run(cwd, env, ["init", "--project", "demo"]);
+		const taskPath = (id: string) =>
+			join(home, "projects", "demo", "goals", "main", "tasks", `${id}.md`);
+
+		await run(cwd, env, ["new", "Pass task", "--status", "ready"]);
+		await setVerify(taskPath("pass-task"), "true");
+		const passNoVerify = await runFail(cwd, env, ["done", "pass-task"]);
+		expect(passNoVerify).toContain("no recorded pass");
+		expect(await run(cwd, env, ["verify", "pass-task"])).toContain("Verified pass-task");
+		expect(await readFile(taskPath("pass-task"), "utf-8")).toContain("## Evidence");
+		expect(await run(cwd, env, ["done", "pass-task"])).toContain("Done pass-task");
+
+		await run(cwd, env, ["new", "Fail task", "--status", "ready"]);
+		await setVerify(taskPath("fail-task"), "false");
+		const verifyFail = await runFail(cwd, env, ["verify", "fail-task"]);
+		expect(verifyFail).toContain("Verify failed");
+		expect(await runFail(cwd, env, ["done", "fail-task"])).toContain("no recorded pass");
+		expect(await runFail(cwd, env, ["done", "fail-task", "--force"])).toContain("requires --reason");
+		expect(await run(cwd, env, ["done", "fail-task", "--force", "--reason", "ci flaky"])).toContain(
+			"Done fail-task",
+		);
+		expect(await readFile(taskPath("fail-task"), "utf-8")).toContain("ci flaky");
+
+		// Backward compat: a task with the default (empty) ## Verify block closes once AC is checked.
+		await run(cwd, env, ["new", "Compat task", "--status", "ready"]);
+		await checkCriteria(taskPath("compat-task"));
+		expect(await run(cwd, env, ["done", "compat-task"])).toContain("Done compat-task");
+	});
+
+	test("parallel claims on the same task: exactly one wins", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-race-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await gitInit(cwd);
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Race task", "--status", "ready"]);
+
+		const [a, b] = await Promise.all([
+			runFail(cwd, env, ["claim", "race-task", "--agent", "a"]),
+			runFail(cwd, env, ["claim", "race-task", "--agent", "b"]),
+		]);
+		const outputs = [a, b];
+		expect(outputs.filter((out) => out.includes("Claimed race-task")).length).toBe(1);
+		const loser = outputs.find((out) => !out.includes("Claimed race-task"))!;
+		expect(loser).toMatch(/lock held|already claimed/);
+	});
+
+	test("AGENT_BOARD_REPO routes git guards to the override repo", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-mainrepo-"));
+		const worktree = await mkdtemp(join(tmpdir(), "agent-board-wt-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		await gitInit(cwd);
+		await gitInit(worktree);
+		await gitDetach(worktree);
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Override task", "--status", "ready"]);
+
+		const blocked = await runFail(cwd, { ...env, AGENT_BOARD_REPO: worktree }, [
+			"claim",
+			"override-task",
+			"--agent",
+			"a",
+		]);
+		expect(blocked).toContain("detached");
+	});
 });
 
 async function run(
@@ -293,5 +396,55 @@ steps:
     prompt: |
       ${text}
 `,
+	);
+}
+
+async function runFail(
+	cwd: string,
+	env: Record<string, string | undefined>,
+	args: string[],
+): Promise<string> {
+	const proc = Bun.spawn(["bun", cli, ...args], { cwd, env, stdout: "pipe", stderr: "pipe" });
+	const [stdout, stderr] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+	]);
+	await proc.exited;
+	return stdout + stderr;
+}
+
+async function gitInit(dir: string): Promise<void> {
+	const g = (args: string[]) =>
+		Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "pipe" }).exited;
+	await g(["init", "-b", "main"]);
+	await g(["config", "user.email", "t@t.t"]);
+	await g(["config", "user.name", "t"]);
+	await writeFile(join(dir, "f.txt"), "a");
+	await g(["add", "."]);
+	await g(["commit", "-m", "one"]);
+	await writeFile(join(dir, "g.txt"), "b");
+	await g(["add", "."]);
+	await g(["commit", "-m", "two"]);
+}
+
+async function gitDetach(dir: string): Promise<void> {
+	await Bun.spawn(["git", "-C", dir, "checkout", "HEAD~1"], {
+		stdout: "pipe",
+		stderr: "pipe",
+	}).exited;
+}
+
+async function setVerify(path: string, cmd: string): Promise<void> {
+	let body = await readFile(path, "utf-8");
+	body = body.replace("- [ ] Define success criteria.", "- [x] Define success criteria.");
+	body = body.replace(/## Verify[\s\S]*$/, `## Verify\n\n\`\`\`sh\n${cmd}\n\`\`\`\n`);
+	await writeFile(path, body);
+}
+
+async function checkCriteria(path: string): Promise<void> {
+	const body = await readFile(path, "utf-8");
+	await writeFile(
+		path,
+		body.replace("- [ ] Define success criteria.", "- [x] Define success criteria."),
 	);
 }

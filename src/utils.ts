@@ -1,7 +1,15 @@
 import { existsSync } from "node:fs";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { homedir } from "node:os";
+
+// Write via a temp file + atomic rename so a concurrent reader never observes a
+// truncated/partial file (e.g. `plan --related` reading another project mid-write).
+export async function atomicWrite(path: string, content: string): Promise<void> {
+	const tmp = `${path}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+	await writeFile(tmp, content);
+	await rename(tmp, path);
+}
 
 export function getHomeRoot(): string {
 	return process.env.AGENT_BOARD_HOME ?? join(homedir(), ".agent-board");

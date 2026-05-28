@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RunState, RunStepResult, TaskFile, Workflow, WorkflowStep, Workspace } from "./types.js";
 import { setTaskStatus } from "./tasks.js";
+import { atomicWrite } from "./utils.js";
 import { renderPrompt } from "./workflow.js";
 import { runsDir } from "./workspace.js";
 
@@ -16,7 +17,7 @@ export async function runWorkflow(input: {
 		force: true,
 	});
 
-	const runId = `${timestampForPath()}-${input.task.meta.id}-${input.workflow.name}`;
+	const runId = `${timestampForPath()}-${input.task.meta.id}-${input.workflow.name}-${Math.random().toString(36).slice(2, 6)}`;
 	const runPath = join(runsDir(input.workspace), runId);
 	await mkdir(runPath, { recursive: true });
 
@@ -229,7 +230,7 @@ async function streamAndCollect(
 }
 
 async function writeRunState(runPath: string, state: RunState): Promise<void> {
-	await writeFile(join(runPath, "run.json"), JSON.stringify(state, null, 2));
+	await atomicWrite(join(runPath, "run.json"), JSON.stringify(state, null, 2));
 }
 
 async function writeSummary(runPath: string, state: RunState): Promise<void> {
@@ -247,7 +248,7 @@ async function writeSummary(runPath: string, state: RunState): Promise<void> {
 		),
 		"",
 	];
-	await writeFile(join(runPath, "summary.md"), lines.join("\n"));
+	await atomicWrite(join(runPath, "summary.md"), lines.join("\n"));
 }
 
 function timestampForPath(): string {

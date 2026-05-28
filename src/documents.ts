@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseFrontmatter, stringifyFrontmatter } from "./markdown.js";
 import type { OverlayScope, Workspace } from "./types.js";
-import { listFiles, nowIso, uniqueSlug } from "./utils.js";
+import { atomicWrite, listFiles, nowIso, uniqueSlug } from "./utils.js";
 import { overlayDir } from "./workspace.js";
 
 export type KnowledgeKind = "decision" | "note" | "gotcha";
@@ -191,7 +191,7 @@ async function writeDocument(
 	doc: AgentDocument,
 	order: string[],
 ): Promise<void> {
-	await writeFile(
+	await atomicWrite(
 		doc.path,
 		stringifyFrontmatter(
 			doc.meta as unknown as Record<string, unknown>,

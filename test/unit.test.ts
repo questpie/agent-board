@@ -1,10 +1,13 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { parseFrontmatter, stringifyFrontmatter } from "../src/markdown.js";
 import { createSpec } from "../src/documents.js";
+import { gitState } from "../src/git.js";
+import { atomicWrite } from "../src/utils.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
+import { parseVerifyCommands } from "../src/verify.js";
 import { parseWorkflow, renderPrompt } from "../src/workflow.js";
 import type { Workspace } from "../src/types.js";
 
@@ -134,6 +137,65 @@ steps:
 		expect(prompt).toContain("- agent-board");
 		expect(prompt).toContain("Repo rules");
 		expect(prompt).toContain("Render Prompt");
+	});
+});
+
+describe("git", () => {
+	test("detects branch and detached HEAD", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agent-board-git-unit-"));
+		const g = (args: string[]) =>
+			Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "pipe" }).exited;
+		await g(["init", "-b", "main"]);
+		await g(["config", "user.email", "t@t.t"]);
+		await g(["config", "user.name", "t"]);
+		await writeFile(join(dir, "a.txt"), "a");
+		await g(["add", "."]);
+		await g(["commit", "-m", "one"]);
+		await writeFile(join(dir, "b.txt"), "b");
+		await g(["add", "."]);
+		await g(["commit", "-m", "two"]);
+
+		const onBranch = await gitState(dir);
+		expect(onBranch.isRepo).toBe(true);
+		expect(onBranch.detached).toBe(false);
+		expect(onBranch.branch).toBe("main");
+
+		await g(["checkout", "HEAD~1"]);
+		const detached = await gitState(dir);
+		expect(detached.detached).toBe(true);
+		expect(detached.branch).toBe(null);
+	});
+
+	test("reports non-git directories", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agent-board-nogit-"));
+		expect((await gitState(dir)).isRepo).toBe(false);
+	});
+});
+
+describe("atomic write", () => {
+	test("writes content and leaves no temp file behind", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agent-board-atomic-"));
+		const path = join(dir, "file.txt");
+		await atomicWrite(path, "hello");
+		expect(await readFile(path, "utf-8")).toBe("hello");
+		await atomicWrite(path, "world");
+		expect(await readFile(path, "utf-8")).toBe("world");
+		expect(await readdir(dir)).toEqual(["file.txt"]);
+	});
+});
+
+describe("verify", () => {
+	test("parses fenced commands and preserves commas", () => {
+		const body = ["## Verify", "", "```sh", "bun run check-types", "turbo run test --filter=admin,framework", "```"].join("\n");
+		expect(parseVerifyCommands(body)).toEqual([
+			"bun run check-types",
+			"turbo run test --filter=admin,framework",
+		]);
+	});
+
+	test("returns no commands for empty or absent blocks", () => {
+		expect(parseVerifyCommands("## Verify\n\n<!-- none -->\n")).toEqual([]);
+		expect(parseVerifyCommands("## Goal\n\nNothing here.\n")).toEqual([]);
 	});
 });
 

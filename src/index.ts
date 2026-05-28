@@ -4,8 +4,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getSpec, listKnowledge, listSpecs, parseScope } from "./documents.js";
-import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, runsDir, useGoal, workspaceForGoal } from "./workspace.js";
-import { createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask } from "./tasks.js";
+import { gitState } from "./git.js";
+import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, runsDir, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
+import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask } from "./tasks.js";
+import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
 import type { TaskFile, Workspace } from "./types.js";
 import { table } from "./utils.js";
 import { listWorkflows, readWorkflow } from "./workflow.js";
@@ -16,7 +18,7 @@ const program = new Command();
 program
 	.name("agent-board")
 	.description("Markdown task board and workflow runner for coding agents")
-	.version("0.1.0")
+	.version("0.2.1")
 	.allowUnknownOption(true);
 
 program
@@ -322,15 +324,54 @@ knowledge
 program
 	.command("claim")
 	.argument("<task-id>")
-	.description("Claim a task")
+	.description("Claim a task (guards detached HEAD and unfinished dependencies)")
 	.option("--agent <name>", "Agent name", process.env.USER ?? "agent")
+	.option("--allow-detached", "Allow claiming on a detached HEAD")
 	.action(async (id, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
-			const task = await setTaskStatus(workspace, id, "in_progress", {
-				assignee: options.agent,
+			const { task, warnings } = await claimTask(workspace, id, {
+				agent: options.agent,
+				allowDetached: options.allowDetached,
 			});
 			console.log(`Claimed ${task.meta.id}`);
+			for (const warning of warnings) console.warn(`Warning: ${warning}`);
+		});
+	});
+
+program
+	.command("verify")
+	.argument("<task-id>")
+	.description("Run the task's ## Verify commands from the repo root and record evidence")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const task = await getTask(workspace, id);
+			const cmds = parseVerifyCommands(task.body);
+			if (!cmds.length) {
+				console.log(`No verify commands in the ## Verify block for ${id}.`);
+				return;
+			}
+			console.log(`Running ${cmds.length} verify command(s) in ${workspace.repoPath}`);
+			const results = await runVerify(workspace.repoPath, cmds);
+			for (const result of results) {
+				console.log(`- ${result.cmd} -> exit ${result.exitCode}`);
+			}
+			const state = await gitState(workspace.repoPath);
+			const timestamp = new Date().toISOString();
+			const allPass = results.every((result) => result.exitCode === 0);
+			await updateTask(workspace, id, (current) => {
+				current.body = appendEvidence(
+					current.body,
+					formatVerifyEvidence(results, timestamp, state.head),
+				);
+				if (allPass) {
+					current.meta.verified = timestamp;
+					current.meta.verified_sha = state.head ?? "";
+				}
+			});
+			if (!allPass) throw new Error(`Verify failed for ${id}.`);
+			console.log(`Verified ${id}`);
 		});
 	});
 
@@ -449,12 +490,14 @@ program
 	.command("done")
 	.argument("<task-id>")
 	.description("Mark a task as done")
-	.option("--force", "Close even with unchecked acceptance criteria")
+	.option("--force", "Close even with unchecked criteria or failing/absent verify")
+	.option("--reason <text>", "Reason for forcing (logged as evidence)")
 	.action(async (id, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const task = await setTaskStatus(workspace, id, "done", {
 				force: options.force,
+				reason: options.reason,
 			});
 			console.log(`Done ${task.meta.id}`);
 		});
@@ -542,12 +585,27 @@ const skills = program.command("skills").description("Manage agent-board skill l
 
 skills
 	.command("install")
-	.description("Install global Claude and agents skill symlinks")
+	.description("Install global Claude, agents, and Cursor skill symlinks")
 	.action(async () => {
 		await main(async () => {
 			const warnings = await installGlobalSkills();
 			console.log("Installed agent-board skills");
 			for (const warning of warnings) console.warn(`Warning: ${warning}`);
+		});
+	});
+
+skills
+	.command("doctor")
+	.description("Show which runtimes have agent-board skills linked")
+	.action(async () => {
+		await main(async () => {
+			const statuses = await skillsDoctor();
+			console.log(
+				table([
+					["Skill", "Runtime", "State", "Path"],
+					...statuses.map((status) => [status.skill, status.runtime, status.state, status.path]),
+				]),
+			);
 		});
 	});
 
