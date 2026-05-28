@@ -1,5 +1,5 @@
 import { existsSync, lstatSync } from "node:fs";
-import { chmod, mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -7,19 +7,10 @@ import { describe, expect, test } from "bun:test";
 const cli = join(import.meta.dir, "..", "src", "index.ts");
 
 describe("cli", () => {
-	test("initializes home-only workspace and runs workflow with fake agents", async () => {
+	test("initializes home-only workspace", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-cli-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
-		const bin = await mkdtemp(join(tmpdir(), "agent-board-bin-"));
-		await writeFile(join(cwd, "AGENTS.md"), "Repo rules");
-		await writeFakeAgent(join(bin, "codex"), "codex");
-		await writeFakeAgent(join(bin, "claude"), "claude");
-
-		const env = {
-			...process.env,
-			AGENT_BOARD_HOME: home,
-			PATH: `${bin}:${process.env.PATH}`,
-		};
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
 
 		expect(await run(cwd, env, ["init", "--project", "demo"])).toContain(
 			"Initialized demo",
@@ -30,12 +21,6 @@ describe("cli", () => {
 			"Created add-cli",
 		);
 		expect(await run(cwd, env, ["tasks"])).toContain("add-cli");
-		expect((await readdir(join(home, "workflows"))).sort()).toEqual([
-			"dev.yml",
-			"research.yml",
-			"triage.yml",
-			"validate.yml",
-		]);
 		expect((await readdir(join(home, "projects", "demo", "goals", "main"))).sort()).toContain("tasks");
 		expect((await readdir(join(home, "skills"))).sort()).toEqual([
 			"agent-board",
@@ -51,46 +36,6 @@ describe("cli", () => {
 			"review-workflow.md",
 			"task-workflow.md",
 		]);
-
-		const output = await run(cwd, env, [
-			"run",
-			"add-cli",
-			"--workflow",
-			"dev",
-		]);
-		expect(output).toContain("Run started:");
-		expect(output).toContain("Logs: agent-board logs");
-		expect(output).toContain("Run completed");
-
-		const runs = await run(cwd, env, ["runs", "add-cli"]);
-		expect(runs).toContain("completed");
-
-		const task = await readFile(
-			join(home, "projects", "demo", "goals", "main", "tasks", "add-cli.md"),
-			"utf-8",
-		);
-		expect(task).toContain('status: "in_progress"');
-		const runId = (await readdir(join(home, "projects", "demo", "goals", "main", "runs")))[0]!;
-		const logs = await run(cwd, env, ["logs", runId.slice(0, 16), "--step", "implement"]);
-		expect(logs).toContain("codex called");
-		const prompt = await readFile(
-			join(
-				home,
-				"projects",
-				"demo",
-				"goals",
-				"main",
-				"runs",
-				runId,
-				"implement",
-				"prompt.md",
-			),
-			"utf-8",
-		);
-		expect(prompt).toContain("## Recommended Skills");
-		expect(prompt).toContain("agent-board");
-		expect(prompt).toContain("## repo:AGENTS.md");
-		expect(prompt).toContain("## task:demo/main/add-cli");
 	});
 
 	test("manages goals, scoped specs, scoped knowledge, links, and plan output", async () => {
@@ -134,31 +79,6 @@ describe("cli", () => {
 		expect(await run(cwd, env, ["spec", "list"])).toContain("project  auth-plan");
 		expect(await run(cwd, env, ["spec", "list"])).toContain("goal     auth-spike");
 		expect(await run(cwd, env, ["knowledge", "list"])).toContain("global");
-	});
-
-	test("uses workflow overlay precedence", async () => {
-		const cwd = await mkdtemp(join(tmpdir(), "agent-board-cli-"));
-		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
-		const bin = await mkdtemp(join(tmpdir(), "agent-board-bin-"));
-		await writeFakeAgent(join(bin, "codex"), "codex");
-		const env = {
-			...process.env,
-			AGENT_BOARD_HOME: home,
-			PATH: `${bin}:${process.env.PATH}`,
-		};
-
-		await run(cwd, env, ["init", "--project", "demo"]);
-		await writeWorkflow(join(home, "projects", "demo", "workflows", "quick.yml"), "project prompt");
-		await writeWorkflow(join(home, "projects", "demo", "goals", "main", "workflows", "quick.yml"), "goal prompt");
-		await run(cwd, env, ["new", "Overlay test", "--status", "ready"]);
-		await run(cwd, env, ["run", "overlay-test", "--workflow", "quick"]);
-		const runId = (await readdir(join(home, "projects", "demo", "goals", "main", "runs")))[0]!;
-		const prompt = await readFile(
-			join(home, "projects", "demo", "goals", "main", "runs", runId, "one", "prompt.md"),
-			"utf-8",
-		);
-		expect(prompt).toContain("goal prompt");
-		expect(prompt).not.toContain("project prompt");
 	});
 
 	test("shows related project work in plan", async () => {
@@ -214,8 +134,6 @@ describe("cli", () => {
 		await mkdir(join(project, "tasks"), { recursive: true });
 		await mkdir(join(project, "specs"), { recursive: true });
 		await mkdir(join(project, "knowledge"), { recursive: true });
-		await mkdir(join(project, "runs"), { recursive: true });
-		await mkdir(join(project, "workflows"), { recursive: true });
 		await writeFile(
 			join(project, "tasks", "old-task.md"),
 			`---
@@ -232,28 +150,9 @@ updated: "2026-05-16T00:00:00.000Z"
 Old task.
 `,
 		);
-		await writeFile(
-			join(project, "workflows", "old.yml"),
-			`name: old
-context:
-  - AGENTS.md
-  - .agent/tasks/{{task.id}}.md
-  - .agent/specs
-  - .agent/knowledge
-steps:
-  - id: one
-    prompt: |
-      ok
-`,
-		);
-
 		const output = await run(cwd, { ...process.env, AGENT_BOARD_HOME: home }, ["migrate", "--project", "demo"]);
 		expect(output).toContain("Migrated demo");
 		expect(await readFile(join(project, "goals", "main", "tasks", "old-task.md"), "utf-8")).toContain("Old Task");
-		const workflow = await readFile(join(project, "goals", "main", "workflows", "old.yml"), "utf-8");
-		expect(workflow).toContain("task:current");
-		expect(workflow).toContain("specs:goal");
-		expect(workflow).toContain("knowledge:goal");
 	});
 
 	test("claim guards detached HEAD and unfinished dependencies", async () => {
@@ -371,32 +270,6 @@ async function run(
 	]);
 	if (exitCode !== 0) throw new Error(`${stdout}\n${stderr}`);
 	return stdout + stderr;
-}
-
-async function writeFakeAgent(path: string, name: string): Promise<void> {
-	await writeFile(
-		path,
-		`#!/usr/bin/env bun
-console.log("${name} called");
-console.log(process.argv.slice(2).join(" ").slice(0, 80));
-`,
-	);
-	await chmod(path, 0o755);
-}
-
-async function writeWorkflow(path: string, text: string): Promise<void> {
-	await writeFile(
-		path,
-		`name: quick
-default_agent: codex
-context:
-  - task:current
-steps:
-  - id: one
-    prompt: |
-      ${text}
-`,
-	);
 }
 
 async function runFail(

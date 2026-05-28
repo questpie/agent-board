@@ -19,7 +19,6 @@ export interface TaskMeta {
 	status: TaskStatus;
 	priority: TaskPriority;
 	assignee: string;
-	workflow: string;
 	branch: string;
 	skills: string[];
 	specs: string[];
@@ -69,52 +68,4 @@ export interface Workspace {
 	goalPath: string;
 	cwd: string;
 	project: ProjectConfig;
-}
-
-export type AgentName = "codex" | "claude" | string;
-
-export interface WorkflowStep {
-	id: string;
-	role?: string;
-	agent?: AgentName;
-	intent?: string;
-	skills: string[];
-	prompt?: string;
-}
-
-export interface WorkflowParallelStep {
-	id: string;
-	parallel: WorkflowStep[];
-}
-
-export type WorkflowItem = WorkflowStep | WorkflowParallelStep;
-
-export interface Workflow {
-	name: string;
-	description?: string;
-	default_agent?: AgentName;
-	skills: string[];
-	context: string[];
-	steps: WorkflowItem[];
-}
-
-export interface RunStepResult {
-	id: string;
-	agent: string;
-	exitCode: number | null;
-	startedAt: string;
-	finishedAt: string;
-	stdoutPath: string;
-	stderrPath: string;
-	promptPath: string;
-}
-
-export interface RunState {
-	id: string;
-	taskId: string;
-	workflow: string;
-	status: "running" | "completed" | "failed";
-	startedAt: string;
-	finishedAt?: string;
-	steps: RunStepResult[];
 }

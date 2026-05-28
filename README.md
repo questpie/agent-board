@@ -1,10 +1,10 @@
 # agent-board
 
-A small Markdown task board and workflow runner for coding agents.
+A small Markdown task board and execution contract for coding agents.
 
-`agent-board` gives Codex, Claude Code, and similar agents a shared place to keep track of work: goals, tasks, specs, knowledge, workflow recipes, and run logs. Everything is plain text under `~/.agent-board`, with repositories registered by path.
+`agent-board` gives Codex, Claude Code, Cursor, and similar agents a shared place to keep track of work: goals, tasks, specs, and knowledge. Everything is plain text under `~/.agent-board`, with repositories registered by path.
 
-It is a small local system: the CLI owns state, skills guide agent behavior, and workflows describe which agents should run and in what order.
+It is a small local system: the CLI owns durable state and enforces an execution contract (claim, verify, done), while skills guide agent behavior. Orchestration — spawning and coordinating worker agents — is left to your host (Claude Code, Cursor, or your own script), which calls the board's commands.
 
 ## Why
 
@@ -13,13 +13,11 @@ Multi-step coding work needs a durable map. A plan gets discussed, a blocker app
 `agent-board` keeps that map on disk:
 
 - `goals` keep a slice of work focused
-- `tasks` track executable work, status, blockers, and dependencies
+- `tasks` track executable work, status, blockers, dependencies, and verify evidence
 - `specs` keep design notes and acceptance criteria
 - `knowledge` keeps decisions, gotchas, and reusable facts
-- `workflows` run Codex/Claude steps from YAML
-- `runs` store prompts, logs, and summaries
 
-It runs local agents with your configured CLI permissions. Treat it as a project memory and orchestration layer.
+It also enforces discipline the board can't leave to prose: a task can't be claimed on a detached HEAD or with unfinished dependencies, and a task with verify commands can't be closed until they pass.
 
 ## Install
 
@@ -36,12 +34,15 @@ agent-board --help
 agent --help
 ```
 
-`agent-board skills install` links the bundled skill into:
+`agent-board skills install` links the bundled skills into every runtime it can find:
 
 ```txt
-~/.claude/skills/agent-board
-~/.agents/skills/agent-board
+~/.claude/skills/{agent-board,agent-board-worker,agent-board-research}
+~/.agents/skills/{agent-board,agent-board-worker,agent-board-research}
+~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research}
 ```
+
+Check what's linked with `agent-board skills doctor`.
 
 ## First Run
 
@@ -60,33 +61,28 @@ agent-board link add-task-cli --spec cli-mvp-plan
 
 agent-board status
 agent-board plan
-agent-board run add-task-cli --workflow dev
 ```
 
-Inspect the run:
+A worker then picks the task up:
 
 ```sh
-agent-board runs add-task-cli
-agent-board logs <run-id-or-prefix>
+agent-board claim add-task-cli --agent worker-1   # guards detached HEAD + unfinished deps
+# ... implement on the task branch ...
+agent-board verify add-task-cli                   # runs the task's ## Verify block, records evidence
+agent-board done add-task-cli                      # blocked until criteria are checked and verify passed
 ```
-
-`run` prints the run id as soon as the run folder exists, so you can refer to it immediately.
 
 ## How It Thinks About Work
 
 **Project** is a registered repository path.
 
-**Goal** is the active slice of work inside a project. Tasks and runs belong to a goal.
+**Goal** is the active slice of work inside a project. Tasks belong to a goal.
 
-**Task** is work that can be claimed and finished.
+**Task** is work that can be claimed, verified, and finished.
 
 **Spec** is durable reasoning: why something is being built, what tradeoffs matter, what done means.
 
 **Knowledge** is reusable project memory: decisions, gotchas, conventions, facts.
-
-**Workflow** is a YAML recipe for running agents.
-
-**Run** is the saved execution: prompt, stdout/stderr, summary, and metadata.
 
 ## Storage
 
@@ -95,20 +91,19 @@ All state lives in `~/.agent-board`:
 ```txt
 ~/.agent-board/
   registry.json
-  workflows/
   specs/
   knowledge/
-  skills/agent-board/
+  skills/
+    agent-board/
+    agent-board-worker/
+    agent-board-research/
   projects/<project>/
     project.json
-    workflows/
     specs/
     knowledge/
     goals/<goal>/
       goal.md
       tasks/
-      runs/
-      workflows/
       specs/
       knowledge/
       status.md
@@ -125,7 +120,7 @@ AGENT_BOARD_PROJECT=my-project AGENT_BOARD_GOAL=cli-mvp agent-board status
 
 ## Overlays
 
-Specs, knowledge, and workflows can live at three levels:
+Specs and knowledge can live at three levels:
 
 - `global`: shared across projects
 - `project`: shared by all goals in one repo
@@ -156,7 +151,7 @@ title: "Add task CLI"
 status: "ready"
 priority: "normal"
 assignee: ""
-workflow: ""
+branch: ""
 skills: []
 specs: ["cli-mvp-plan"]
 depends_on: []
@@ -165,6 +160,8 @@ blocked_by: []
 relates_to: []
 created: "2026-05-16T00:00:00.000Z"
 updated: "2026-05-16T00:00:00.000Z"
+verified: ""
+verified_sha: ""
 ---
 ```
 
@@ -180,95 +177,60 @@ Priorities:
 high normal low
 ```
 
-## Workflows
+The body holds two contract-bearing sections. Acceptance criteria gate `done`:
 
-Workflows are YAML files in any `workflows/` overlay.
+```md
+## Acceptance Criteria
 
-```yaml
-name: dev
-description: Implement task with review sidecars
-default_agent: codex
-skills: [agent-board]
-context:
-  - repo:AGENTS.md
-  - task:current
-  - specs:linked
-  - knowledge:global
-  - knowledge:project
-  - knowledge:goal
-  - runs:current
-
-steps:
-  - id: implement
-    role: main
-    agent: codex
-    intent: implementation
-    skills: [agent-board]
-    prompt: |
-      Implement this task. Read the task, linked specs, knowledge, and repo instructions.
-
-  - id: review
-    parallel:
-      - id: code-review
-        role: reviewer
-        agent: claude
-        intent: review
-        skills: [agent-board]
-        prompt: |
-          Review for bugs, missing tests, regressions, and unresolved criteria.
-      - id: test-review
-        role: validator
-        agent: codex
-        intent: validation
-        skills: [agent-board]
-        prompt: |
-          Inspect changed files and run or propose relevant checks.
+- [ ] Define success criteria.
 ```
 
-Top-level steps run sequentially. `parallel` groups run concurrently.
+The `## Verify` block holds shell commands (one per line, in a fenced block) that `agent-board verify` runs from the repo root:
 
-Supported context aliases:
-
-- `repo:<path>` reads from the registered repo
-- `task:current` renders the active task
-- `specs:linked` renders specs linked from task frontmatter
-- `knowledge:global`, `knowledge:project`, `knowledge:goal` render scoped knowledge
-- `runs:current` renders the current run folder
-
-Supported template variables:
-
-- `{{task.id}}`
-- `{{task.title}}`
-- `{{task.status}}`
-- `{{workspace.path}}`
-- `{{repo.path}}`
-- `{{project.id}}`
-- `{{goal.id}}`
-- `{{run.path}}`
-
-## Agent Commands
-
-Default execution is trusted local execution:
+````md
+## Verify
 
 ```sh
-codex exec --dangerously-bypass-approvals-and-sandbox -
-claude -p --permission-mode bypassPermissions
+bun run check-types
+bun test
 ```
+````
 
-Override binaries or args with environment variables:
+`verify` appends results to a `## Evidence` section and, on all-pass, stamps `verified` / `verified_sha`. An empty `## Verify` block leaves the verify gate dormant.
+
+## Execution Contract
+
+The CLI enforces what skills alone can't guarantee under multi-agent pressure:
+
+- **`claim`** refuses a detached HEAD (`--allow-detached` to override) and refuses tasks with unfinished dependencies, and won't steal a task already claimed by another agent.
+- **`verify`** runs the task's `## Verify` commands and records evidence.
+- **`done`** is blocked while acceptance criteria are unchecked or verify hasn't passed. `--force --reason "<why>"` bypasses with an audit line in `## Evidence`.
+
+Git state is observed, never mutated — checking out branches and committing is the agent's job.
+
+## Concurrency
+
+agent-board is file-based and safe for multiple concurrent agents where state is partitioned:
+
+- **Different projects / repos:** isolated automatically. Initialize one project at a time.
+- **Same repo, different goals:** give each agent a git worktree and pin it via env; never use `goal use` concurrently (the active goal is shared mutable state).
 
 ```sh
-AGENT_BOARD_CODEX_BIN=/path/to/codex
-AGENT_BOARD_CLAUDE_BIN=/path/to/claude
-AGENT_BOARD_CODEX_ARGS='exec --dangerously-bypass-approvals-and-sandbox -'
-AGENT_BOARD_CLAUDE_ARGS='-p --permission-mode bypassPermissions'
+git worktree add ../repo-goalA -b feat/goalA
+AGENT_BOARD_PROJECT=myproj AGENT_BOARD_GOAL=goalA AGENT_BOARD_REPO="$PWD/../repo-goalA" agent ...
 ```
 
-Custom agent names use:
+Board writes are atomic (temp + rename), claims take an exclusive lock, and `AGENT_BOARD_REPO` points git guards and verify at the agent's own worktree.
 
-```sh
-AGENT_BOARD_<AGENT_NAME>_BIN=/path/to/binary
-```
+## Skills
+
+Three composable skills are bundled and installed together:
+
+- **`agent-board`** — orchestrator (default): plan, create specs/tasks, link blockers, delegate to workers, review evidence.
+- **`agent-board-worker`** — implement one task: checkout branch, claim, implement, verify, done.
+- **`agent-board-research`** — read-only discovery: turn uncertainty into specs and tasks.
+
+Each `SKILL.md` carries trigger keywords in its description so Claude Code and Cursor auto-load the right one.
 
 ## Command Reference
 
@@ -291,7 +253,8 @@ agent-board status
 agent-board next
 agent-board show <task-id>
 agent-board new <title> [--status <status>] [--priority <priority>]
-agent-board claim <task-id> [--agent <name>]
+agent-board claim <task-id> [--agent <name>] [--allow-detached]
+agent-board verify <task-id>
 agent-board block <task-id> <reason>
 agent-board ready <task-id>
 agent-board unblock <task-id>
@@ -299,7 +262,7 @@ agent-board link <task-id> --blocks <task-id>
 agent-board link <task-id> --spec <spec-id>
 agent-board plan [--related]
 agent-board review <task-id>
-agent-board done <task-id> [--force]
+agent-board done <task-id> [--force] [--reason <text>]
 ```
 
 Specs and knowledge:
@@ -312,49 +275,22 @@ agent-board knowledge add <title> [--kind decision|note|gotcha] [--scope global|
 agent-board knowledge list [--scope global|project|goal]
 ```
 
-Workflows and runs:
-
-```sh
-agent-board workflows
-agent-board run <task-id> [--workflow <name>] [--agent <codex|claude>]
-agent-board runs [<task-id>]
-agent-board logs <run-id-or-prefix> [--step <step-id>]
-```
-
 Skills:
 
 ```sh
 agent-board skills install
+agent-board skills doctor
 ```
-
-## Bundled Workflows
-
-`init` installs these workflows into the global overlay:
-
-- `research`: inspect repo context and create findings/specs/tasks
-- `triage`: break a goal into tasks, blockers, and parallel lanes
-- `dev`: implement with review/validation sidecars
-- `validate`: focused review/test pass with follow-up task creation
 
 ## Agent Modes
 
-The bundled skill nudges agents into two modes.
+The bundled skills nudge agents into modes.
 
-In `orchestrator` mode, the agent plans work, writes specs, creates tasks, links dependencies, runs workflows, reads logs, and updates the board. Implementation happens through workflow runs or through an explicit worker request.
+In **orchestrator** mode (default), the agent plans work, writes specs, creates tasks, links dependencies, delegates ready tasks to worker sub-agents, reviews evidence, and updates the board. It does not implement tasks itself.
 
-In `worker` mode, the agent has a concrete task. It claims the task, edits files, runs checks, and updates task state.
+In **worker** mode, the agent has a concrete task: it gets on the task branch, claims, edits files, runs `agent-board verify`, and closes the task.
 
-Typical orchestrator loop:
-
-```sh
-agent-board status
-agent-board plan --related
-agent-board run <ready-task> --workflow dev
-agent-board runs <ready-task>
-agent-board logs <run-id-or-prefix>
-```
-
-The V1 runner is foreground: it streams worker output, stores logs, and exits when the workflow exits. Background supervision is a later extension.
+Spawning and coordinating those workers is the host's job (Claude Code's dynamic workflows, Cursor's Task tool, or your own script) — agent-board provides the durable plan and the contract they drive.
 
 ## Migration
 
@@ -364,7 +300,7 @@ Older flat layouts can be copied into `goals/main`:
 agent-board migrate --project <slug>
 ```
 
-The command copies old `tasks`, `specs`, `knowledge`, `runs`, and `workflows`, and rewrites legacy `.agent/*` workflow context aliases where safe. Existing `.agent` symlinks are left untouched.
+The command copies old `tasks`, `specs`, and `knowledge`. Existing `.agent` symlinks are left untouched.
 
 ## Development
 
@@ -374,7 +310,7 @@ bun run check-types
 bun test
 ```
 
-The tests cover frontmatter parsing, task graph links, overlays, prompt rendering, fake-agent workflow runs, global skill install, related project planning, and migration.
+The tests cover frontmatter parsing, task graph links, overlays, git state detection, the verify gate, claim guards, atomic writes, concurrent-claim locking, global skill install, related project planning, and migration.
 
 ## License
 

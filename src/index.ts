@@ -5,20 +5,18 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getSpec, listKnowledge, listSpecs, parseScope } from "./documents.js";
 import { gitState } from "./git.js";
-import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, runsDir, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
+import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
 import type { TaskFile, Workspace } from "./types.js";
 import { table } from "./utils.js";
-import { listWorkflows, readWorkflow } from "./workflow.js";
-import { runWorkflow } from "./runner.js";
 
 const program = new Command();
 
 program
 	.name("agent-board")
-	.description("Markdown task board and workflow runner for coding agents")
-	.version("0.2.1")
+	.description("Markdown task board and execution contract for coding agents")
+	.version("0.3.0")
 	.allowUnknownOption(true);
 
 program
@@ -503,84 +501,6 @@ program
 		});
 	});
 
-program
-	.command("workflows")
-	.description("List workflows from goal/project/global overlays")
-	.action(async () => {
-		await main(async () => {
-			const workspace = currentWorkspace();
-			const workflows = await listWorkflows(workspace);
-			console.log(workflows.length ? workflows.join("\n") : "No workflows.");
-		});
-	});
-
-program
-	.command("run")
-	.argument("<task-id>")
-	.option("--workflow <name>", "Workflow name")
-	.option("--agent <codex|claude>", "Override all workflow agents")
-	.description("Run a task workflow")
-	.action(async (id, options) => {
-		await main(async () => {
-			const workspace = currentWorkspace();
-			const task = await getTask(workspace, id);
-			const workflowName = options.workflow ?? task.meta.workflow ?? "dev";
-			const workflow = await readWorkflow(workspace, workflowName);
-			const run = await runWorkflow({
-				workspace,
-				task,
-				workflow,
-				agentOverride: options.agent,
-			});
-			console.log(`\nRun ${run.status}: ${run.id}`);
-		});
-	});
-
-program
-	.command("runs")
-	.argument("[task-id]")
-	.description("List workflow runs for the active goal")
-	.action(async (taskId) => {
-		await main(async () => {
-			const workspace = currentWorkspace();
-			const { readdir, readFile } = await import("node:fs/promises");
-			const dirs = await readdir(runsDir(workspace)).catch(() => []);
-			const rows = [["Run", "Task", "Workflow", "Status"]];
-			for (const dir of dirs.sort()) {
-				const raw = await readFile(join(runsDir(workspace), dir, "run.json"), "utf-8").catch(() => "");
-				if (!raw) continue;
-				const run = JSON.parse(raw) as { id: string; taskId: string; workflow: string; status: string };
-				if (taskId && run.taskId !== taskId) continue;
-				rows.push([run.id, run.taskId, run.workflow, run.status]);
-			}
-			console.log(rows.length > 1 ? table(rows) : "No runs.");
-		});
-	});
-
-program
-	.command("logs")
-	.argument("<run-id>")
-	.option("--step <step-id>", "Step id")
-	.description("Show run logs by full run id or unique prefix")
-	.action(async (runId, options) => {
-		await main(async () => {
-			const workspace = currentWorkspace();
-			const runPath = await resolveRunPath(workspace, runId);
-			const run = JSON.parse(await readFile(join(runPath, "run.json"), "utf-8")) as {
-				steps: { id: string; stdoutPath: string; stderrPath: string }[];
-			};
-			const steps = options.step
-				? run.steps.filter((step) => step.id === options.step)
-				: run.steps;
-			for (const step of steps) {
-				console.log(`\n# ${step.id} stdout\n`);
-				console.log(await readFile(step.stdoutPath, "utf-8").catch(() => ""));
-				console.log(`\n# ${step.id} stderr\n`);
-				console.log(await readFile(step.stderrPath, "utf-8").catch(() => ""));
-			}
-		});
-	});
-
 const skills = program.command("skills").description("Manage agent-board skill links");
 
 skills
@@ -695,19 +615,6 @@ function resolveDependencyKey(workspace: Workspace, ref: string): string {
 
 function taskKey(workspace: Workspace, id: string): string {
 	return `task:${workspace.projectSlug}/${workspace.goalSlug}/${id}`;
-}
-
-async function resolveRunPath(workspace: Workspace, runRef: string): Promise<string> {
-	const { readdir } = await import("node:fs/promises");
-	const dir = runsDir(workspace);
-	const entries = await readdir(dir).catch(() => [] as string[]);
-	if (entries.includes(runRef)) return join(dir, runRef);
-	const matches = entries.filter((entry) => entry.startsWith(runRef));
-	if (matches.length === 1) return join(dir, matches[0]!);
-	if (matches.length > 1) {
-		throw new Error(`Run id prefix is ambiguous: ${runRef}\n${matches.join("\n")}`);
-	}
-	throw new Error(`Run not found: ${runRef}`);
 }
 
 async function main(fn: () => Promise<void>): Promise<void> {

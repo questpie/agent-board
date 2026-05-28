@@ -1,23 +1,19 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace } from "./types.js";
 import { atomicWrite, ensureDir, getHomeRoot, nowIso, projectSlugFromCwd, slugify } from "./utils.js";
 import {
 	configSkillReadme,
-	defaultWorkflow,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
 	researchSkillReadme,
-	researchWorkflow,
 	researchWorkflowSkillReadme,
 	reviewWorkflowSkillReadme,
 	skillAgents,
 	skillReadme,
 	taskWorkflowReference,
-	triageWorkflow,
-	validateWorkflow,
 	workerSkillAgents,
 	workerSkillReadme,
 } from "./skills.js";
@@ -53,7 +49,6 @@ export async function initWorkspace(
 	await ensureRootLayout(root);
 	await ensureProjectLayout(projectPath);
 	await installBundledSkills(root);
-	await writeDefaultWorkflows(root);
 
 	const existing = await readProjectConfig(projectPath).catch(() => null);
 	const project: ProjectConfig = {
@@ -165,7 +160,7 @@ export async function useGoal(
 export function overlayDir(
 	workspace: Workspace,
 	scope: OverlayScope,
-	kind: "workflows" | "specs" | "knowledge",
+	kind: "specs" | "knowledge",
 ): string {
 	if (scope === "global") return join(workspace.root, kind);
 	if (scope === "project") return join(workspace.projectPath, kind);
@@ -174,10 +169,6 @@ export function overlayDir(
 
 export function taskDir(workspace: Workspace): string {
 	return join(workspace.goalPath, "tasks");
-}
-
-export function runsDir(workspace: Workspace): string {
-	return join(workspace.goalPath, "runs");
 }
 
 export function workspaceForGoal(
@@ -241,7 +232,6 @@ export async function migrateWorkspace(
 	await ensureRootLayout(root);
 	await ensureProjectLayout(projectPath);
 	await installBundledSkills(root);
-	await writeDefaultWorkflows(root);
 
 	const existing = await readProjectConfig(projectPath).catch(() => null);
 	const now = nowIso();
@@ -261,18 +251,13 @@ export async function migrateWorkspace(
 	});
 
 	const goalPath = await ensureGoal(projectPath, DEFAULT_GOAL, "Main");
-	for (const name of ["tasks", "specs", "knowledge", "runs"] as const) {
+	for (const name of ["tasks", "specs", "knowledge"] as const) {
 		const from = join(projectPath, name);
 		const to = join(goalPath, name);
 		if (existsSync(from)) {
 			await copyDirContents(from, to);
 			migrated.push(name);
 		}
-	}
-	const oldWorkflows = join(projectPath, "workflows");
-	if (existsSync(oldWorkflows)) {
-		await copyDirContents(oldWorkflows, join(goalPath, "workflows"), rewriteLegacyWorkflow);
-		migrated.push("workflows");
 	}
 
 	return {
@@ -285,14 +270,14 @@ export async function migrateWorkspace(
 }
 
 async function ensureRootLayout(root: string): Promise<void> {
-	for (const dir of ["projects", "workflows", "specs", "knowledge", "skills"]) {
+	for (const dir of ["projects", "specs", "knowledge", "skills"]) {
 		await ensureDir(join(root, dir));
 	}
 	await writeIfMissing(join(root, "registry.json"), JSON.stringify({ projects: {} }, null, 2));
 }
 
 async function ensureProjectLayout(projectPath: string): Promise<void> {
-	for (const dir of ["workflows", "specs", "knowledge", "goals"]) {
+	for (const dir of ["specs", "knowledge", "goals"]) {
 		await ensureDir(join(projectPath, dir));
 	}
 }
@@ -303,19 +288,12 @@ async function ensureGoal(
 	title: string,
 ): Promise<string> {
 	const goalPath = join(projectPath, "goals", id);
-	for (const dir of ["tasks", "runs", "workflows", "specs", "knowledge"]) {
+	for (const dir of ["tasks", "specs", "knowledge"]) {
 		await ensureDir(join(goalPath, dir));
 	}
 	await writeIfMissing(join(goalPath, "goal.md"), `---\nid: "${id}"\ntitle: "${title}"\n---\n\n# ${title}\n`);
 	await writeIfMissing(join(goalPath, "status.md"), `# Status\n`);
 	return goalPath;
-}
-
-async function writeDefaultWorkflows(root: string): Promise<void> {
-	await writeIfMissing(join(root, "workflows", "dev.yml"), defaultWorkflow);
-	await writeIfMissing(join(root, "workflows", "research.yml"), researchWorkflow);
-	await writeIfMissing(join(root, "workflows", "triage.yml"), triageWorkflow);
-	await writeIfMissing(join(root, "workflows", "validate.yml"), validateWorkflow);
 }
 
 async function installBundledSkills(root: string): Promise<void> {
@@ -407,35 +385,18 @@ async function linkIfSafe(
 	await symlink(target, linkPath, "dir");
 }
 
-async function copyDirContents(
-	from: string,
-	to: string,
-	transform?: (path: string, content: string) => string,
-): Promise<void> {
+async function copyDirContents(from: string, to: string): Promise<void> {
 	await ensureDir(to);
 	const entries = await readdir(from, { withFileTypes: true }).catch(() => []);
 	for (const entry of entries) {
 		const source = join(from, entry.name);
 		const target = join(to, entry.name);
 		if (entry.isDirectory()) {
-			await copyDirContents(source, target, transform);
+			await copyDirContents(source, target);
 		} else if (entry.isFile()) {
-			if (transform && /\.(ya?ml|md)$/.test(entry.name)) {
-				await writeFile(target, transform(source, await readFile(source, "utf-8")));
-			} else {
-				await copyFile(source, target);
-			}
+			await copyFile(source, target);
 		}
 	}
-}
-
-function rewriteLegacyWorkflow(_path: string, content: string): string {
-	return content
-		.replace(/\.agent\/tasks\/\{\{task\.id\}\}\.md/g, "task:current")
-		.replace(/\.agent\/specs/g, "specs:goal")
-		.replace(/\.agent\/knowledge/g, "knowledge:goal")
-		.replace(/\.agent\/runs/g, "runs:current")
-		.replace(/^\s+- AGENTS\.md$/gm, "  - repo:AGENTS.md");
 }
 
 async function readGoalTitle(path: string, fallback: string): Promise<string> {
