@@ -113,7 +113,7 @@ Read the deeper docs:
 
 - [Concepts](docs/concepts.md)
 - [Flows](docs/flows.md)
-- [Storage Adapters](docs/storage-adapters.md)
+- [Storage Drivers](docs/storage-adapters.md)
 - [CLI Reference](docs/cli-reference.md)
 - [Execution Contract RFC](docs/rfc-execution-contract.md)
 

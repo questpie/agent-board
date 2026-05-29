@@ -139,7 +139,8 @@ AGENT_BOARD_PROJECT=myproj AGENT_BOARD_GOAL=goal-a AGENT_BOARD_REPO=/path/to/wor
 
 The current backend is local Markdown on disk. Future Linear, S3/R2, DB, or
 custom API integrations should preserve the same task/spec/goal semantics behind
-adapter contracts instead of changing how agents use the CLI.
+one store driver. Agents should still use explicit `agent-board` subcommands;
+the driver decides where records are persisted.
 
-See [Storage Adapters](storage-adapters.md) for the proposed `BoardStore`,
-`ArtifactStore`, sync, and Autopilot integration model.
+See [Storage Drivers](storage-adapters.md) for the proposed command boundary and
+driver contract.

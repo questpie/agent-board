@@ -1,220 +1,228 @@
-# Storage Adapters
+# Storage Drivers
 
-`agent-board` is local-first today: the canonical board lives in Markdown under
-`~/.agent-board`. Keep that as the default. External systems should plug into the
-same board contract instead of changing how controller agents reason about
-goals, tasks, specs, knowledge, and flow runs.
+`agent-board` should stay simple: agents talk to explicit `agent-board`
+subcommands, and those subcommands talk to one configured store driver.
 
-This matters for Autopilot and team setups where the same board may need to
-sync to Linear, object storage, a database, or a custom product API.
+The driver can persist state in local Markdown, Linear, S3/R2 through a
+file/blob API, a database, or a custom HTTP API. Controller and worker agents
+should not care. They keep using the same CLI contract.
 
-## Design Goals
+## Core Principle
 
-- Humans keep using natural language; agents keep using the CLI contract.
-- Local filesystem remains the zero-config backend.
-- Markdown stays readable and portable, even when another store is primary.
-- Claims, done gates, verify evidence, and flow artifacts preserve semantics
-  across backends.
-- External adapters are explicit. A broken Linear/S3/API sync must not corrupt
-  the local board.
+The CLI is the write boundary.
 
-## Split The Problem
+```txt
+agent/controller/worker
+  -> agent-board subcommand
+    -> StoreDriver
+      -> filesystem | Linear API | files-sdk/R2/S3 | database | custom API
+```
 
-There are three separate storage concerns:
+There is no separate first-class sync system in the base design. If a backend
+mirrors somewhere else, that is an implementation detail of the driver.
 
-1. **BoardStore**: structured agent-board state.
-   Projects, goals, tasks, specs, knowledge, links, claims, evidence, and status
-   transitions live here.
-2. **ArtifactStore**: large or append-only files.
-   Flow summaries, per-agent outputs, diagnostics, logs, screenshots, patches,
-   and other blobs live here.
-3. **Sync/EventStore**: integration events.
-   Records what changed so adapters can mirror state into Linear, S3, a DB, or
-   a custom API idempotently.
+## What This Means
 
-Do not make object storage pretend to be a full task database unless it can
-support the claim and conflict semantics below.
+- Agents should create, read, update, claim, verify, and close board state
+  through `agent-board` subcommands.
+- Filesystem paths printed by the current local driver are conveniences, not the
+  long-term contract.
+- A non-filesystem driver must not require agents to open a vendor UI or write
+  raw provider records.
+- Store adapters should preserve the same task/spec/knowledge/flow semantics.
+- The default driver remains `filesystem` under `~/.agent-board`.
 
-## BoardStore Contract
+The more operations we expose as precise subcommands, the easier it is to store
+the board anywhere.
 
-The first refactor should extract the current filesystem behavior behind a
-small internal port without changing CLI behavior:
+## StoreDriver Shape
+
+The driver should be one primitive interface, not many subsystems:
 
 ```ts
-interface BoardStore {
-	getProject(slug: string): Promise<ProjectRecord>;
-	listGoals(project: string): Promise<GoalRecord[]>;
-	getGoal(project: string, goal: string): Promise<GoalRecord>;
+interface StoreDriver {
+	getProject(ref: ProjectRef): Promise<ProjectRecord>;
+	listGoals(project: ProjectRef): Promise<GoalRecord[]>;
+	getGoal(ref: GoalRef): Promise<GoalRecord>;
+	putGoal(input: PutGoalInput): Promise<GoalRecord>;
 
-	listTasks(scope: TaskScope, filter?: TaskFilter): Promise<TaskRecord[]>;
+	listTasks(scope: GoalRef, filter?: TaskFilter): Promise<TaskRecord[]>;
 	getTask(ref: TaskRef): Promise<TaskRecord>;
-	createTask(input: CreateTaskInput): Promise<TaskRecord>;
-	updateTask(ref: TaskRef, patch: TaskPatch, precondition?: WritePrecondition): Promise<TaskRecord>;
+	putTask(input: PutTaskInput, options?: WriteOptions): Promise<TaskRecord>;
+	claimTask(ref: TaskRef, input: ClaimInput): Promise<TaskRecord>;
+	appendTaskEvidence(ref: TaskRef, input: EvidenceInput): Promise<TaskRecord>;
 
-	claimTask(ref: TaskRef, claim: ClaimInput): Promise<TaskRecord>;
-	appendEvidence(ref: TaskRef, entry: EvidenceEntry, precondition?: WritePrecondition): Promise<TaskRecord>;
-
-	listSpecs(scope: OverlayScope): Promise<DocumentRecord[]>;
+	listSpecs(scope: OverlayRef): Promise<DocumentRecord[]>;
 	getSpec(ref: DocumentRef): Promise<DocumentRecord>;
-	upsertSpec(doc: DocumentRecord, precondition?: WritePrecondition): Promise<DocumentRecord>;
+	putSpec(input: PutDocumentInput, options?: WriteOptions): Promise<DocumentRecord>;
 
-	listKnowledge(scope: OverlayScope): Promise<DocumentRecord[]>;
-	upsertKnowledge(doc: DocumentRecord, precondition?: WritePrecondition): Promise<DocumentRecord>;
+	listKnowledge(scope: OverlayRef): Promise<DocumentRecord[]>;
+	getKnowledge(ref: DocumentRef): Promise<DocumentRecord>;
+	putKnowledge(input: PutDocumentInput, options?: WriteOptions): Promise<DocumentRecord>;
+
+	listFlows(scope: ProjectRef): Promise<FlowRecord[]>;
+	getFlow(ref: FlowRef): Promise<FlowRecord>;
+	putFlow(input: PutFlowInput, options?: WriteOptions): Promise<FlowRecord>;
+
+	createFlowRun(input: CreateFlowRunInput): Promise<FlowRunRecord>;
+	appendFlowRunOutput(ref: FlowRunRef, input: FlowRunOutput): Promise<void>;
+	getFlowRun(ref: FlowRunRef): Promise<FlowRunRecord>;
 }
 ```
 
-`WritePrecondition` is the important part. A backend must either support a real
-compare-and-set primitive or route writes through a single writer. Two agents
-must not both claim the same task.
-
-Minimum preconditions:
-
-- `version` or `etag` for read-modify-write updates
-- exclusive claim lock for `claimTask`
-- idempotency key for sync-created tasks/comments
-- append-safe evidence writes
-
-## ArtifactStore Contract
-
-Flow runs and large outputs can use a simpler file/blob API:
+`WriteOptions` carries the concurrency primitive:
 
 ```ts
-interface ArtifactStore {
-	write(key: string, body: BodyInit, metadata?: Record<string, string>): Promise<ArtifactRecord>;
-	read(key: string): Promise<ArtifactBody>;
-	head(key: string): Promise<ArtifactRecord | undefined>;
-	list(prefix: string): AsyncIterable<ArtifactRecord>;
-	delete(key: string): Promise<void>;
+interface WriteOptions {
+	ifVersion?: string;
+	idempotencyKey?: string;
 }
 ```
 
-This is where provider-neutral file libraries are useful. Artifacts need
-streaming, prefixes, metadata, and provider portability; they usually do not
-need task-claim semantics.
+Every driver needs one of these strategies:
 
-## Adapter Shapes
+- real compare-and-set writes with `version` or `etag`
+- real locks for claim operations
+- a single writer API that serializes mutations
 
-| Adapter | Good For | Caution |
-| --- | --- | --- |
-| Filesystem | default local use, dogfooding, zero setup | single machine unless synced externally |
-| Linear | team-visible tasks, status, assignment, review trail | map only stable fields; comments are not a lock service |
-| S3/R2/GCS | portable artifacts and Markdown snapshots | needs ETag/conditional writes or an external lock for primary board state |
-| SQLite/Postgres | Autopilot workers, dashboard/API, real locks and queries | adds service/config overhead |
-| Custom API | productized hosted board, auth, multi-tenant policy | must expose the same BoardStore invariants |
-| files-sdk-style blob layer | portable artifacts across many providers | not enough alone for task graph queries and claims |
+If a provider cannot support that, it can still be useful for single-agent local
+work or flow artifacts, but it should not be advertised as safe for concurrent
+task claims.
 
-## Linear Mapping
+## Command Boundary Audit
 
-Start with Linear as a mirror, not the source of truth:
+These commands already express durable board transitions well:
 
-| agent-board | Linear |
+| State | Existing commands |
 | --- | --- |
-| goal | project, cycle, label, or parent initiative |
-| task | issue |
-| status | issue workflow state |
-| assignee | Linear assignee or bot label |
-| priority | issue priority |
-| specs | issue description links or project docs |
-| evidence | comments with stable machine prefix |
-| flow run | comment linking summary/artifacts |
+| projects/goals | `init`, `projects`, `goals`, `goal new`, `goal use` |
+| task lifecycle | `new`, `tasks`, `status`, `show`, `claim`, `block`, `ready`, `unblock`, `review`, `verify`, `done` |
+| task graph | `link --blocks`, `link --spec`, `plan`, `next` |
+| specs/knowledge create/read | `spec new`, `spec list`, `spec show`, `knowledge add`, `knowledge list` |
+| flows run/read | `flow new`, `flow list`, `flow run`, `flow show` |
 
-Each synced object should carry a stable backlink:
+The store-driver refactor should add explicit write/update commands for the
+places that still assume direct local file editing:
+
+| Resource | Needed command shape |
+| --- | --- |
+| task body/frontmatter | `agent-board task write <id> --from <file|->` or narrower `task set` fields |
+| acceptance criteria / verify block | `agent-board task criteria`, `agent-board task verify-command` |
+| spec body | `agent-board spec write <id> --from <file|->` |
+| knowledge body | `agent-board knowledge write <id> --from <file|->` |
+| flow script | `agent-board flow write <name> --from <file|->` and `flow cat <name>` |
+
+For the filesystem driver these commands can still read/write Markdown files.
+For Linear/API/R2/DB they become the portable mutation API.
+
+## Driver Examples
+
+| Driver | Storage model |
+| --- | --- |
+| `filesystem` | Current Markdown layout under `~/.agent-board`. Zero config. |
+| `linear` | Tasks as Linear issues, evidence as comments, specs/knowledge/flows as issue descriptions, docs, or comments controlled by the driver. |
+| `files` | Markdown and flow outputs as objects through a file/blob SDK over local/S3/R2/GCS/Azure. Requires conditional writes for concurrent use. |
+| `database` | Tables/documents for tasks/specs/knowledge/flows with real transactions and locks. |
+| `api` | Hosted agent-board API that implements the same driver operations. |
+
+The CLI should not grow separate commands like `sync linear` as a required user
+workflow. If we want Linear-backed storage, configure `store.driver = "linear"`
+and keep using `agent-board new`, `agent-board claim`, `agent-board done`, and
+`agent-board flow run`.
+
+## Linear Driver
+
+Linear can be a real driver if the adapter owns the mapping:
+
+| agent-board | Linear-backed implementation |
+| --- | --- |
+| goal | project, cycle, label, or parent issue chosen by driver config |
+| task | issue |
+| status | workflow state |
+| assignee | Linear assignee or bot-owned metadata |
+| priority | issue priority |
+| specs/knowledge | issue description, project document, or bot-managed comment |
+| evidence | bot-managed comments with stable markers |
+| flow run | bot-managed comment or attachment link |
+
+The driver must store stable ids in metadata so renames are not destructive:
 
 ```txt
 agent-board.project=agent-board
 agent-board.goal=flow-mvp
 agent-board.task=implement-flow-run
-agent-board.sync_id=<uuid>
+agent-board.version=<provider-version>
 ```
 
-That lets sync be idempotent and lets humans edit Linear without the adapter
-confusing a renamed issue for a new task.
+If Linear cannot provide safe claim locking directly, the driver should either
+use a single-writer API path or clearly report that concurrent claims are not
+safe for that configuration.
 
-## S3 And Files SDK
+## Files SDK / S3 / R2 Driver
 
-Object storage is a strong fit for `ArtifactStore` and for board snapshots:
+[`files-sdk`](https://files-sdk.dev/) is interesting as the implementation
+layer for a `files` driver because it can give one API over local files, S3, R2,
+GCS, Azure, and similar stores.
+
+Suggested object layout:
 
 ```txt
+registry.json
+projects/<project>/project.json
+projects/<project>/goals/<goal>/goal.md
 projects/<project>/goals/<goal>/tasks/<task>.md
+projects/<project>/specs/<spec>.md
+projects/<project>/knowledge/<note>.md
+projects/<project>/flows/<flow>.mjs
 projects/<project>/goals/<goal>/flows/runs/<run>/summary.md
-projects/<project>/events/<date>.jsonl
+projects/<project>/goals/<goal>/flows/runs/<run>/agents/<agent>.md
 ```
 
-[`files-sdk`](https://files-sdk.dev/) is worth tracking for this layer because
-it provides a common API for S3, R2, GCS, Azure, filesystem, and other blob
-stores; exposes upload, download, head, list, delete, metadata/etag-shaped
-records; and includes ready-made AI tools for Vercel AI SDK/OpenAI/Claude-style
-agents.
-
-Use it first for artifacts or snapshots. Before using it as the primary
-`BoardStore`, verify that the chosen provider path gives us conditional writes
-or a lock primitive. Without that, two agents can race through claim or evidence
-updates.
-
-## Autopilot Path
-
-For Autopilot, prefer this sequence:
-
-1. Extract `FileBoardStore` behind the `BoardStore` interface. No behavior
-   change, no config change.
-2. Add a local event journal:
-
-   ```txt
-   ~/.agent-board/projects/<project>/events/YYYY-MM-DD.jsonl
-   ```
-
-   Every task/spec/knowledge/flow mutation emits a compact event.
-3. Add `agent-board sync linear` as a mirror adapter. It reads events, upserts
-   Linear issues/comments, and records sync cursors.
-4. Add `ArtifactStore` for flow outputs. Start with filesystem, then S3/R2 via a
-   blob adapter.
-5. Add `ApiBoardStore` or `DbBoardStore` only when we need multi-machine
-   concurrent writers.
-
-This gives Autopilot useful integration early while preserving the local board
-that agents can already operate today.
+This keeps Markdown portable while letting the driver swap storage providers.
+The hard requirement is conditional write support. Without ETag/version-style
+updates, the driver can lose concurrent edits or allow double claims.
 
 ## Configuration Sketch
 
-Keep configuration boring and explicit:
+Keep configuration to one store block:
 
 ```toml
 [store]
-type = "filesystem"
+driver = "filesystem"
 root = "~/.agent-board"
-
-[[sync]]
-type = "linear"
-mode = "mirror"
-team = "ENG"
-
-[artifacts]
-type = "filesystem"
-root = "~/.agent-board/artifacts"
 ```
 
-Future examples:
+Other examples:
 
 ```toml
-[artifacts]
-type = "s3"
-bucket = "agent-board-artifacts"
-prefix = "org/acme"
+[store]
+driver = "linear"
+team = "ENG"
+project = "Agent Board"
 
 [store]
-type = "api"
-url = "https://agent-board.internal/api"
+driver = "files"
+provider = "r2"
+bucket = "agent-board"
+prefix = "questpie"
+
+[store]
+driver = "api"
+url = "https://agent-board.internal"
 ```
 
-The CLI should print which store is active in `agent-board status` once
-non-filesystem stores exist.
+`agent-board status` should print the active driver once non-filesystem drivers
+exist.
 
-## Rules For Adapters
+## Implementation Path
 
-- Never hide conflicts. Surface them to the controller agent with paths, ids,
-  and suggested next commands.
-- Treat sync as retryable and idempotent.
-- Keep generated comments/metadata clearly machine-owned.
-- Do not require Linear/S3/API for the basic install path.
-- Do not let spawned worker agents choose or reconfigure stores.
-- Keep flow summaries compact even when raw artifacts live in object storage.
+1. Treat existing subcommands as the public contract.
+2. Add the missing write/read subcommands for task/spec/knowledge/flow bodies.
+3. Extract the current filesystem code into `FileStoreDriver` with no behavior
+   change.
+4. Route CLI commands through `StoreDriver`.
+5. Add one non-filesystem driver only after the interface is proven by the
+   filesystem driver. The likely first choices are `files` for R2/S3-style object
+   storage or `linear` for Autopilot/team task visibility.
+
+This keeps the design primitive: one CLI, one driver, one set of semantics.
