@@ -6,6 +6,7 @@ import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace 
 import { atomicWrite, ensureDir, getHomeRoot, nowIso, projectSlugFromCwd, slugify } from "./utils.js";
 import {
 	configSkillReadme,
+	flowOrchestrationSkillReadme,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
 	researchSkillReadme,
@@ -277,7 +278,7 @@ async function ensureRootLayout(root: string): Promise<void> {
 }
 
 async function ensureProjectLayout(projectPath: string): Promise<void> {
-	for (const dir of ["specs", "knowledge", "goals"]) {
+	for (const dir of ["specs", "knowledge", "flows", "goals"]) {
 		await ensureDir(join(projectPath, dir));
 	}
 }
@@ -302,6 +303,7 @@ async function installBundledSkills(root: string): Promise<void> {
 	await writeBundledSkill(join(skillRoot, "SKILL.md"), skillReadme);
 	await writeBundledSkill(join(skillRoot, "AGENTS.md"), skillAgents);
 	await writeBundledSkill(join(skillRoot, "references", "config.md"), configSkillReadme);
+	await writeBundledSkill(join(skillRoot, "references", "flow-orchestration.md"), flowOrchestrationSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "pm-orchestrator.md"), pmOrchestratorSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "task-workflow.md"), taskWorkflowReference);
 	await writeBundledSkill(join(skillRoot, "references", "research-workflow.md"), researchWorkflowSkillReadme);

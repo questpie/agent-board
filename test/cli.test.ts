@@ -1,6 +1,6 @@
 import { existsSync, lstatSync } from "node:fs";
 import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 
@@ -31,6 +31,7 @@ describe("cli", () => {
 			(await readdir(join(home, "skills", "agent-board", "references"))).sort(),
 		).toEqual([
 			"config.md",
+			"flow-orchestration.md",
 			"pm-orchestrator.md",
 			"research-workflow.md",
 			"review-workflow.md",
@@ -250,6 +251,80 @@ Old task.
 		]);
 		expect(blocked).toContain("detached");
 	});
+
+	test("creates and runs a project flow script with mock Codex", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home, AGENT_BOARD_FLOW_MOCK: "1" };
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		const created = await run(cwd, env, ["flow", "new", "Audit Repo"]);
+		expect(created).toContain("Created flow audit-repo");
+		expect(created).toContain("Next: edit the script");
+		const flowPath = lineValue(created, "Script: ");
+		expect(await readFile(flowPath, "utf-8")).toContain("export default async function flow");
+		expect(await run(cwd, env, ["flow", "list"])).toContain("audit-repo");
+
+		await run(cwd, env, ["new", "Flow Task", "--status", "ready"]);
+		const output = await run(cwd, env, [
+			"flow",
+			"run",
+			"audit-repo",
+			"--input",
+			"Improve test coverage",
+			"--task",
+			"flow-task",
+			"--concurrency",
+			"2",
+		]);
+		expect(output).toContain("Flow run");
+		expect(output).toContain("Next: read Summary first");
+		const summaryPath = lineValue(output, "Summary: ");
+		const summary = await readFile(summaryPath, "utf-8");
+		const runPath = dirname(summaryPath);
+		const events = await readFile(join(runPath, "events.jsonl"), "utf-8");
+		const agentFiles = await readdir(join(runPath, "agents"));
+		expect(summary).toContain("Runtime: codex");
+		expect(summary).toContain("Mock codex response");
+		expect(summary).toContain("## Controller Next");
+		expect(events).not.toContain("Mock codex response");
+		expect(agentFiles.length).toBeGreaterThan(0);
+		expect(await readFile(join(runPath, "agents", agentFiles[0]!), "utf-8")).toContain("Mock codex response");
+		expect(await run(cwd, env, ["flow", "show", basename(dirname(summaryPath))])).toContain("## Controller Next");
+		expect(await readFile(join(home, "projects", "demo", "goals", "main", "tasks", "flow-task.md"), "utf-8")).toContain("[flow]");
+	});
+
+	test("flow run validates task id before starting agents", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-task-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home, AGENT_BOARD_FLOW_MOCK: "1" };
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		const output = await runFail(cwd, env, [
+			"flow",
+			"run",
+			"Audit the repository",
+			"--task",
+			"missing-task",
+		]);
+
+		expect(output).toContain("Task not found: missing-task");
+		expect(existsSync(join(home, "projects", "demo", "goals", "main", "flows", "runs"))).toBe(false);
+	});
+
+	test("flow run auto-initializes a workspace for ad-hoc goals", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-auto-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const output = await run(
+			cwd,
+			{ ...process.env, AGENT_BOARD_HOME: home, AGENT_BOARD_FLOW_MOCK: "1" },
+			["flow", "run", "Audit the repository", "--agents", "1"],
+		);
+
+		expect(output).toContain("Initialized agent-board-flow-auto");
+		expect(output).toContain("Flow run");
+		expect(JSON.parse(await readFile(join(home, "registry.json"), "utf-8")).projects).not.toEqual({});
+	});
 });
 
 async function run(
@@ -270,6 +345,12 @@ async function run(
 	]);
 	if (exitCode !== 0) throw new Error(`${stdout}\n${stderr}`);
 	return stdout + stderr;
+}
+
+function lineValue(output: string, prefix: string): string {
+	const line = output.split("\n").find((item) => item.startsWith(prefix));
+	if (!line) throw new Error(`Missing output line: ${prefix}`);
+	return line.slice(prefix.length);
 }
 
 async function runFail(

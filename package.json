@@ -29,7 +29,9 @@
 		"test": "bun test"
 	},
 	"dependencies": {
-		"commander": "^14.0.2"
+		"ai": "^6.0.193",
+		"commander": "^14.0.2",
+		"spawn-agent": "^0.0.1"
 	},
 	"devDependencies": {
 		"bun-types": "latest",

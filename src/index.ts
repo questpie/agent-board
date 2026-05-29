@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getSpec, listKnowledge, listSpecs, parseScope } from "./documents.js";
+import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parsePositiveInt, runFlow } from "./flow.js";
 import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask } from "./tasks.js";
@@ -501,6 +502,107 @@ program
 		});
 	});
 
+const flow = program.command("flow").description("Create and run local multi-agent flows");
+
+flow
+	.command("new")
+	.argument("<name>")
+	.description("Create a project flow script")
+	.option("--force", "Overwrite an existing flow")
+	.action(async (name, options) => {
+		await main(async () => {
+			const opts = readOptions<{ force?: boolean }>(options);
+			const workspace = await currentOrInitWorkspace();
+			const created = await createFlow(workspace, name, { force: opts.force });
+			console.log(`Created flow ${created.name}`);
+			console.log(`Script: ${created.path}`);
+			console.log("Next: edit the script, summarize its phases to the user, then run:");
+			console.log(`agent-board flow run ${created.name} --input "<scope>"`);
+		});
+	});
+
+flow
+	.command("list")
+	.description("List project flow scripts")
+	.action(async () => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const flows = await listFlows(workspace);
+			if (!flows.length) {
+				console.log("No flows.");
+				return;
+			}
+			console.log(
+				table([
+					["Flow", "Path"],
+					...flows.map((item) => [item.name, item.path]),
+				]),
+			);
+		});
+	});
+
+flow
+	.command("run")
+	.argument("<target>")
+	.description("Run a flow script by name/path, or run an ad-hoc Codex flow")
+	.option("--input <text>", "Input passed to a flow script")
+	.option("--task <task-id>", "Append flow evidence to a task")
+	.option("--runtime <runtime>", "Agent runtime: codex, claude, or opencode", process.env.AGENT_BOARD_FLOW_RUNTIME ?? "codex")
+	.option("--concurrency <n>", "Maximum concurrent agents", "3")
+	.option("--agents <n>", "Agent count for ad-hoc flow runs", "3")
+	.option("--verbose", "Print raw agent stderr")
+	.action(async (target, options) => {
+		await main(async () => {
+			const opts = readOptions<{
+				input?: string;
+				task?: string;
+				runtime: string;
+				concurrency: string;
+				agents: string;
+				verbose?: boolean;
+			}>(options);
+			const workspace = await currentOrInitWorkspace();
+			let result;
+			try {
+				result = await runFlow(workspace, {
+					target,
+					input: opts.input,
+					taskId: opts.task,
+					runtime: parseFlowRuntime(opts.runtime),
+					concurrency: parsePositiveInt(opts.concurrency, "--concurrency"),
+					agents: parsePositiveInt(opts.agents, "--agents"),
+					verbose: opts.verbose,
+				});
+			} catch (error) {
+				if (error instanceof FlowRunError) {
+					console.log(`Flow run ${error.runId} failed`);
+					console.log(`Summary: ${error.summaryPath}`);
+					console.log(`Agent outputs: ${join(error.runPath, "agents")}`);
+					console.log(`Diagnostics: ${join(error.runPath, "diagnostics.jsonl")}`);
+					console.log("Next: read failed Summary first; inspect diagnostics only if needed.");
+				}
+				throw error;
+			}
+			console.log(`Flow run ${result.runId}`);
+			console.log(`Summary: ${result.summaryPath}`);
+			console.log(`Agent outputs: ${join(result.runPath, "agents")}`);
+			console.log(`Diagnostics: ${join(result.runPath, "diagnostics.jsonl")}`);
+			console.log("Next: read Summary first; inspect agent outputs or diagnostics only if needed.");
+		});
+	});
+
+flow
+	.command("show")
+	.argument("<run-id>")
+	.description("Show a flow run summary")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const summaryPath = join(workspace.goalPath, "flows", "runs", id, "summary.md");
+			console.log(await readFile(summaryPath, "utf-8"));
+		});
+	});
+
 const skills = program.command("skills").description("Manage agent-board skill links");
 
 skills
@@ -535,6 +637,19 @@ function currentWorkspace(): Workspace {
 		projectSlug: options.project,
 		goalSlug: options.goal,
 	});
+}
+
+async function currentOrInitWorkspace(): Promise<Workspace> {
+	try {
+		return currentWorkspace();
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.includes("No agent-board project found")) {
+			throw error;
+		}
+		const { workspace } = await initWorkspace(process.cwd());
+		console.warn(`Initialized ${workspace.projectSlug}`);
+		return workspace;
+	}
 }
 
 function cliScopeOverrides(): { project?: string; goal?: string } {
