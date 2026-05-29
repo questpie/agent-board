@@ -85,6 +85,21 @@ Read order:
 
 Raw agent stderr is quiet by default. Use `--verbose` only when debugging the runtime.
 
+### `events.jsonl` schema
+
+`events.jsonl` is the append-only lifecycle/progress stream. Every line is a JSON object with `ts` (ISO timestamp) and `type`, plus type-specific fields. It is intentionally compact: it never carries full agent output (that stays in `agents/*.md`) and never carries raw runtime stderr (that is filtered into `diagnostics.jsonl`). A future `flow watch` command tails this file, so the schema below is stable.
+
+| `type` | Fields | Meaning |
+| --- | --- | --- |
+| `log` | `message` | Controller-level lifecycle line. |
+| `agent_start` | `name`, `mode`, `promptChars` | An agent began streaming. |
+| `agent_delta` | `name`, `chars`, `preview` | Throttled progress while text streams. `chars` is the running output length; `preview` is a SHORT trailing tail (≤ ~80 chars), never the full text. |
+| `agent_heartbeat` | `name`, `chars` | A throttle window saw runtime/tool activity (stderr or tool events) but produced no new text — the agent is alive but quiet. |
+| `agent_finish` | `name`, `mode`, `durationMs`, `outputPath`, `chars`, `diagnostics` | An agent completed; full output is at `outputPath`. |
+| `agent_error` | `name`, `durationMs`, `diagnostics`, `error` | An agent failed. |
+
+`agent_delta`/`agent_heartbeat` are emitted at most once per throttle window (default ~1s, override with `AGENT_BOARD_FLOW_THROTTLE_MS`), so a fast token stream coalesces into a few events rather than one event per token.
+
 ## Controller Pattern
 
 For non-trivial work:

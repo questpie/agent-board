@@ -83,6 +83,27 @@ interface FlowDiagnostic {
 	message: string;
 }
 
+// Compact, throttled progress telemetry written to events.jsonl while an agent
+// streams. Never carries full agent text: `agent_delta` reports a running char
+// count plus a short trailing PREVIEW, and `agent_heartbeat` marks runtime/tool
+// activity that produced no new text. Full output still lives in agents/*.md.
+type FlowProgressEvent =
+	| { type: "agent_delta"; chars: number; preview: string }
+	| { type: "agent_heartbeat"; chars: number };
+
+// Internal, runtime-agnostic stream unit so the real (streamText) path and the
+// AGENT_BOARD_FLOW_MOCK path drive the exact same throttling/emission logic.
+type FlowStreamPart = { type: "text"; text: string } | { type: "activity" };
+
+// Throttle ceiling: emit at most one progress event per window (default ~1s).
+// Overridable for tests via AGENT_BOARD_FLOW_THROTTLE_MS (0 disables throttling).
+function flowThrottleMs(): number {
+	const raw = process.env.AGENT_BOARD_FLOW_THROTTLE_MS;
+	if (raw === undefined) return 1000;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1000;
+}
+
 interface FlowContext {
 	input: string;
 	target: string;
@@ -308,6 +329,17 @@ function createFlowContext(
 					cwd: agentOptions.cwd ?? workspace.repoPath,
 					diagnostics,
 					verbose: options.verbose,
+					onProgress: async (event) => {
+						if (event.type === "agent_delta") {
+							await writeEvent(runPath, "agent_delta", {
+								name,
+								chars: event.chars,
+								preview: event.preview,
+							});
+						} else {
+							await writeEvent(runPath, "agent_heartbeat", { name, chars: event.chars });
+						}
+					},
 				});
 			} catch (error) {
 				await writeDiagnostics(runPath, name, diagnostics);
@@ -429,21 +461,62 @@ async function runAdhocFlow(context: FlowContext): Promise<string> {
 async function runAgentPrompt(
 	runtime: FlowRuntime,
 	prompt: string,
-	options: FlowAgentOptions & { diagnostics: FlowDiagnostic[]; verbose?: boolean },
+	options: FlowAgentOptions & {
+		diagnostics: FlowDiagnostic[];
+		verbose?: boolean;
+		onProgress?: (event: FlowProgressEvent) => Promise<void> | void;
+	},
 ): Promise<string> {
+	const throttleMs = flowThrottleMs();
+	let fullText = "";
+	let charsSinceEmit = 0;
+	let activitySinceEmit = false;
+	let lastEmitMs = Date.now();
+
+	// Coalesce a window of stream activity into at most one compact event. Text
+	// wins over activity, so a heartbeat only fires for activity with no new text.
+	const emitProgress = async (force: boolean): Promise<void> => {
+		const now = Date.now();
+		if (!force && now - lastEmitMs < throttleMs) return;
+		if (charsSinceEmit > 0) {
+			if (options.onProgress) {
+				await options.onProgress({ type: "agent_delta", chars: fullText.length, preview: progressPreview(fullText) });
+			}
+			charsSinceEmit = 0;
+			activitySinceEmit = false;
+			lastEmitMs = now;
+		} else if (activitySinceEmit) {
+			if (options.onProgress) {
+				await options.onProgress({ type: "agent_heartbeat", chars: fullText.length });
+			}
+			activitySinceEmit = false;
+			lastEmitMs = now;
+		}
+	};
+
+	const drain = async (source: AsyncIterable<FlowStreamPart>): Promise<void> => {
+		for await (const part of source) {
+			if (part.type === "text") {
+				fullText += part.text;
+				charsSinceEmit += part.text.length;
+			} else {
+				activitySinceEmit = true;
+			}
+			await emitProgress(false);
+		}
+		await emitProgress(true);
+	};
+
 	if (process.env.AGENT_BOARD_FLOW_MOCK === "1") {
-		return [
-			`Mock ${runtime} response from ${options.name ?? "agent"}.`,
-			"",
-			prompt.slice(0, 600),
-		].join("\n");
+		await drain(mockAgentStream(runtime, options.name, prompt));
+		return fullText;
 	}
 
-	const [{ generateText }, { spawnAgent }] = await Promise.all([
+	const [{ streamText }, { spawnAgent }] = await Promise.all([
 		import("ai"),
 		import("spawn-agent"),
 	]);
-	const result = await generateText({
+	const result = streamText({
 		model: spawnAgent(runtime, {
 			cwd: options.cwd,
 			permission: modeToPermission(options.mode ?? DEFAULT_FLOW_AGENT_MODE),
@@ -451,13 +524,81 @@ async function runAgentPrompt(
 			onStderr: (line: string) => {
 				const diagnostic = summarizeDiagnostic(line);
 				if (diagnostic) options.diagnostics.push(diagnostic);
+				// Stderr is runtime telemetry, not output: it never enters events.jsonl
+				// as text, but it does mark the agent as alive for heartbeats.
+				activitySinceEmit = true;
 				if (options.verbose) console.error(`[${options.name ?? runtime}] ${line}`);
 			},
 		}),
 		system: options.system ?? defaultSystemPrompt(),
 		prompt,
 	});
-	return result.text;
+	await drain(mapAgentStream(result.fullStream));
+	return fullText;
+}
+
+// Maps the AI SDK fullStream onto FlowStreamPart: only `text-delta` carries
+// output text (so the assembled result stays byte-identical to generateText);
+// reasoning/tool events become opaque activity for heartbeats; control frames
+// (start/finish/step/error/etc.) are ignored.
+async function* mapAgentStream(
+	stream: AsyncIterable<{ type: string; text?: string }>,
+): AsyncGenerator<FlowStreamPart> {
+	for await (const part of stream) {
+		if (part.type === "text-delta") {
+			yield { type: "text", text: part.text ?? "" };
+		} else if (isActivityPart(part.type)) {
+			yield { type: "activity" };
+		}
+	}
+}
+
+function isActivityPart(type: string): boolean {
+	return [
+		"reasoning-delta",
+		"tool-input-start",
+		"tool-input-delta",
+		"tool-call",
+		"tool-result",
+		"tool-error",
+		"source",
+		"file",
+	].includes(type);
+}
+
+// Minimal fake stream so streaming telemetry is testable WITHOUT real Codex. The
+// assembled text is byte-identical to the previous mock string. Output is split
+// into many small chunks that emit fast, so the throttle coalesces dozens of
+// "tokens" into a single agent_delta (proving no raw token spam).
+// AGENT_BOARD_FLOW_MOCK_ACTIVITY appends spaced activity-only parts so a test can
+// observe agent_heartbeat; AGENT_BOARD_FLOW_MOCK_DELAY_MS controls that spacing.
+async function* mockAgentStream(
+	runtime: FlowRuntime,
+	name: string | undefined,
+	prompt: string,
+): AsyncGenerator<FlowStreamPart> {
+	const text = `Mock ${runtime} response from ${name ?? "agent"}.\n\n${prompt.slice(0, 600)}`;
+	const chunkSize = 16;
+	for (let index = 0; index < text.length; index += chunkSize) {
+		yield { type: "text", text: text.slice(index, index + chunkSize) };
+	}
+	if (process.env.AGENT_BOARD_FLOW_MOCK_ACTIVITY === "1") {
+		const beatMs = Number.parseInt(process.env.AGENT_BOARD_FLOW_MOCK_DELAY_MS ?? "0", 10) || 1;
+		for (let beat = 0; beat < 2; beat++) {
+			await Bun.sleep(beatMs);
+			yield { type: "activity" };
+		}
+	}
+}
+
+// Short, single-line trailing preview for events.jsonl. Deliberately a TAIL of
+// the accumulated text (never the head), so the persistent event log carries a
+// hint of progress without the full output flooding it.
+function progressPreview(text: string): string {
+	const max = 80;
+	const collapsed = text.replace(/\s+/g, " ").trim();
+	if (collapsed.length <= max) return collapsed;
+	return `...${collapsed.slice(collapsed.length - max)}`;
 }
 
 // Bounded-concurrency runner. Once any task throws, `aborted` flips and the

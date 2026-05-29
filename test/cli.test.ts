@@ -436,6 +436,70 @@ Old task.
 		expect(await readFile(readmePath, "utf-8")).toBe("keep me");
 	});
 
+	test("flow run emits throttled streaming telemetry without real Codex", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-telemetry-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = {
+			...process.env,
+			AGENT_BOARD_HOME: home,
+			AGENT_BOARD_FLOW_MOCK: "1",
+			// Time throttle wide enough that the fast text stream coalesces into a
+			// single delta, then spaced activity beats land in later windows.
+			AGENT_BOARD_FLOW_THROTTLE_MS: "50",
+			AGENT_BOARD_FLOW_MOCK_ACTIVITY: "1",
+			AGENT_BOARD_FLOW_MOCK_DELAY_MS: "120",
+		};
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		const output = await run(cwd, env, [
+			"flow",
+			"run",
+			"Audit the repository for streaming telemetry",
+			"--agents",
+			"1",
+		]);
+		const summaryPath = lineValue(output, "Summary: ");
+		const runPath = dirname(summaryPath);
+		const raw = await readFile(join(runPath, "events.jsonl"), "utf-8");
+		const events = raw
+			.split("\n")
+			.filter((line) => line.length > 0)
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+
+		const deltas = events.filter((event) => event.type === "agent_delta");
+		const heartbeats = events.filter((event) => event.type === "agent_heartbeat");
+		const finishes = events.filter((event) => event.type === "agent_finish");
+
+		// Both progress event types are written, proving the stream telemetry path.
+		expect(deltas.length).toBeGreaterThan(0);
+		expect(heartbeats.length).toBeGreaterThan(0);
+
+		// No raw token spam: a large agent output coalesces into very few deltas.
+		for (const finish of finishes) {
+			const agentName = finish.name;
+			const agentChars = finish.chars as number;
+			const agentDeltas = deltas.filter((event) => event.name === agentName);
+			expect(agentChars).toBeGreaterThan(100);
+			expect(agentDeltas.length).toBeGreaterThanOrEqual(1);
+			expect(agentDeltas.length).toBeLessThanOrEqual(3);
+			// The final delta reports the full running length, never the full text.
+			expect(agentDeltas.at(-1)!.chars).toBe(agentChars);
+		}
+
+		// Previews are short tails, so persistent logs never carry the full output.
+		for (const delta of deltas) {
+			expect((delta.preview as string).length).toBeLessThanOrEqual(83);
+		}
+		expect(raw).not.toContain("Mock codex response");
+
+		// Diagnostics stay a separate, filtered channel (no token deltas leak in).
+		expect(existsSync(join(runPath, "diagnostics.jsonl"))).toBe(false);
+		const agentFiles = await readdir(join(runPath, "agents"));
+		expect(await readFile(join(runPath, "agents", agentFiles[0]!), "utf-8")).toContain(
+			"Mock codex response",
+		);
+	});
+
 	test("creates flow templates and validates template names", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-template-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
