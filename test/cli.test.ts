@@ -82,6 +82,24 @@ describe("cli", () => {
 		expect(await run(cwd, env, ["knowledge", "list"])).toContain("global");
 	});
 
+	test("link --blocks to a missing target fails without mutating the source", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-link-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		const taskPath = join(home, "projects", "demo", "goals", "main", "tasks", "source-task.md");
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Source Task", "--status", "ready"]);
+		const before = await readFile(taskPath, "utf-8");
+
+		const failure = await runFail(cwd, env, ["link", "source-task", "--blocks", "does-not-exist"]);
+		expect(failure).toContain("Task not found: does-not-exist");
+
+		const after = await readFile(taskPath, "utf-8");
+		expect(after).toBe(before);
+		expect(lineValue(after, "blocks: ")).toBe("[]");
+	});
+
 	test("reads and writes task, spec, and knowledge bodies through subcommands", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-body-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));

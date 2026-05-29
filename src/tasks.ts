@@ -97,6 +97,10 @@ export async function linkTasks(
 ): Promise<void> {
 	const from = resolveTaskRef(workspace, fromRef);
 	const to = resolveTaskRef(workspace, toRef);
+	// Validate BOTH endpoints exist before any write, so a typo in the target
+	// can't leave a dangling ref half-applied to the source's blocks array.
+	await getTask(from.workspace, from.id);
+	await getTask(to.workspace, to.id);
 	await updateTask(from.workspace, from.id, (task) => {
 		task.meta.blocks = unique([...task.meta.blocks, formatTaskRefFor(from.workspace, to)]);
 	});
