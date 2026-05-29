@@ -8,7 +8,7 @@ import { gitState } from "../src/git.js";
 import { atomicWrite } from "../src/utils.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
-import { DEFAULT_FLOW_AGENT_MODE, modeToPermission } from "../src/flow.js";
+import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 
 describe("markdown frontmatter", () => {
@@ -163,6 +163,34 @@ describe("flow agent mode", () => {
 		expect(modeToPermission("read")).toBe("auto-reject");
 		expect(modeToPermission("write")).toBe("auto-allow");
 		expect(modeToPermission(DEFAULT_FLOW_AGENT_MODE)).toBe("auto-reject");
+	});
+});
+
+describe("runLimited", () => {
+	test("stops scheduling new tasks once one fails", async () => {
+		let started = 0;
+		const tasks = Array.from({ length: 6 }, (_unused, index) => async () => {
+			started++;
+			if (index === 0) throw new Error("boom");
+			return index;
+		});
+
+		await expect(runLimited(tasks, 1)).rejects.toThrow("boom");
+		expect(started).toBe(1);
+	});
+
+	test("lets in-flight workers finish but pulls no new tasks after a failure", async () => {
+		let started = 0;
+		const tasks = Array.from({ length: 6 }, (_unused, index) => async () => {
+			started++;
+			if (index === 0) throw new Error("boom");
+			await Bun.sleep(1);
+			return index;
+		});
+
+		await expect(runLimited(tasks, 2)).rejects.toThrow("boom");
+		expect(started).toBe(2);
+		expect(started).toBeLessThan(tasks.length);
 	});
 });
 

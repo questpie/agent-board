@@ -460,18 +460,29 @@ async function runAgentPrompt(
 	return result.text;
 }
 
-async function runLimited<T>(
+// Bounded-concurrency runner. Once any task throws, `aborted` flips and the
+// remaining workers stop pulling NEW tasks from the queue, so a single agent
+// failure does not keep scheduling fresh agents (in-flight ones still finish
+// since they cannot be force-cancelled). The original error is re-thrown so
+// the caller still rejects and writes the failed summary.
+export async function runLimited<T>(
 	tasks: Array<() => Promise<T>>,
 	limit: number,
 ): Promise<T[]> {
 	const results = new Array<T>(tasks.length);
 	let next = 0;
+	let aborted = false;
 	const workers = Array.from(
 		{ length: Math.min(limit, tasks.length) },
 		async () => {
-			while (next < tasks.length) {
+			while (!aborted && next < tasks.length) {
 				const index = next++;
-				results[index] = await tasks[index]!();
+				try {
+					results[index] = await tasks[index]!();
+				} catch (error) {
+					aborted = true;
+					throw error;
+				}
 			}
 		},
 	);
