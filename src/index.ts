@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, writeKnowledgeBody, writeSpecBody } from "./documents.js";
-import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, writeFlowScript } from "./flow.js";
+import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
@@ -711,6 +711,30 @@ flow
 			const workspace = await currentOrInitWorkspace();
 			const summaryPath = join(workspace.goalPath, "flows", "runs", id, "summary.md");
 			console.log(await readFile(summaryPath, "utf-8"));
+		});
+	});
+
+flow
+	.command("watch")
+	.argument("<run-id>")
+	.description("Tail a flow run's events.jsonl and exit when it finishes or on Ctrl-C")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const controller = new AbortController();
+			const onSigint = () => controller.abort();
+			process.on("SIGINT", onSigint);
+			try {
+				const result = await watchFlowRun(workspace, id, { signal: controller.signal });
+				if (result.finished) {
+					console.log(`Flow run ${result.runId} finished`);
+					console.log(`Summary: ${join(result.runPath, "summary.md")}`);
+				} else {
+					console.log(`Stopped watching flow run ${result.runId}`);
+				}
+			} finally {
+				process.off("SIGINT", onSigint);
+			}
 		});
 	});
 

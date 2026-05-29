@@ -500,6 +500,42 @@ Old task.
 		);
 	});
 
+	test("flow watch tails a finished run's events and exits", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-watch-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+
+		// Pre-write a synthetic, already-complete run (no real Codex): events.jsonl
+		// holds the full lifecycle and summary.md exists, so watch renders the
+		// backlog and exits immediately instead of polling forever.
+		const runId = "2026-05-29-watch-demo";
+		const runPath = join(home, "projects", "demo", "goals", "main", "flows", "runs", runId);
+		await mkdir(runPath, { recursive: true });
+		const events = [
+			{ ts: "2026-05-29T10:00:00.000Z", type: "log", message: "flow started: audit" },
+			{ ts: "2026-05-29T10:00:00.100Z", type: "agent_start", name: "researcher", mode: "read", promptChars: 42 },
+			{ ts: "2026-05-29T10:00:01.200Z", type: "agent_delta", name: "researcher", chars: 120, preview: "inspecting files" },
+			{ ts: "2026-05-29T10:00:01.700Z", type: "agent_heartbeat", name: "researcher", chars: 120 },
+			{ ts: "2026-05-29T10:00:02.500Z", type: "agent_finish", name: "researcher", mode: "read", durationMs: 2400, outputPath: join(runPath, "agents", "01-researcher.md"), chars: 340, diagnostics: 0 },
+		];
+		await writeFile(join(runPath, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+		await writeFile(join(runPath, "summary.md"), "# Flow Run\n\n## Summary\n\nDone.\n");
+
+		const output = await run(cwd, env, ["flow", "watch", runId]);
+		expect(output).toContain("log: flow started: audit");
+		expect(output).toContain("researcher: start (read)");
+		expect(output).toContain("researcher: 120 chars  inspecting files");
+		expect(output).toContain("researcher: working (120 chars)");
+		expect(output).toContain("researcher: done in 2400ms (340 chars)");
+		expect(output).toContain(`Flow run ${runId} finished`);
+
+		// Unknown run ids fail cleanly rather than hanging on a missing dir.
+		const missing = await runFail(cwd, env, ["flow", "watch", "no-such-run"]);
+		expect(missing).toContain("Flow run not found: no-such-run");
+	});
+
 	test("creates flow templates and validates template names", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-template-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));

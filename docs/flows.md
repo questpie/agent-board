@@ -12,7 +12,10 @@ agent-board flow cat <name>
 agent-board flow write <name> --from ./flow.mjs
 agent-board flow run <name> --input "<scope>" --task <task-id>
 agent-board flow show <run-id>
+agent-board flow watch <run-id>
 ```
+
+`flow watch <run-id>` tails the run's `events.jsonl` and renders compact per-agent progress (start, throttled char counts and preview, heartbeats, finish, errors). It is read-only — it never spawns agents or mutates run state — and exits when the run produces `summary.md` or on Ctrl-C.
 
 Templates:
 
@@ -87,7 +90,7 @@ Raw agent stderr is quiet by default. Use `--verbose` only when debugging the ru
 
 ### `events.jsonl` schema
 
-`events.jsonl` is the append-only lifecycle/progress stream. Every line is a JSON object with `ts` (ISO timestamp) and `type`, plus type-specific fields. It is intentionally compact: it never carries full agent output (that stays in `agents/*.md`) and never carries raw runtime stderr (that is filtered into `diagnostics.jsonl`). A future `flow watch` command tails this file, so the schema below is stable.
+`events.jsonl` is the append-only lifecycle/progress stream. Every line is a JSON object with `ts` (ISO timestamp) and `type`, plus type-specific fields. It is intentionally compact: it never carries full agent output (that stays in `agents/*.md`) and never carries raw runtime stderr (that is filtered into `diagnostics.jsonl`). The `flow watch <run-id>` command tails this file, so the schema below is stable.
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |

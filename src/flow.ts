@@ -287,6 +287,137 @@ export function parsePositiveInt(value: string, name: string): number {
 	return parsed;
 }
 
+// One parsed line of events.jsonl. Only the fields the watch view renders are
+// typed; the writer in createFlowContext is the source of truth for the schema.
+type FlowEvent = {
+	ts?: string;
+	type: string;
+	name?: string;
+	mode?: string;
+	message?: string;
+	chars?: number;
+	preview?: string;
+	durationMs?: number;
+	error?: string;
+};
+
+export type FlowWatchOptions = {
+	// Re-read interval while the run is still streaming.
+	pollMs?: number;
+	// Aborting (e.g. on SIGINT) drains pending events once and returns.
+	signal?: AbortSignal;
+	// Sink for rendered lines; defaults to console.log.
+	onLine?: (line: string) => void;
+};
+
+export type FlowWatchResult = {
+	runId: string;
+	runPath: string;
+	// true when summary.md appeared (run finished), false when interrupted.
+	finished: boolean;
+};
+
+// Read-only tail of a flow run's events.jsonl. Re-reads the whole compact file
+// each poll and emits only lines it has not already rendered, so it tolerates a
+// run that is appended to live as well as one that already completed. Exits when
+// summary.md appears or when the abort signal fires; never mutates run state.
+export async function watchFlowRun(
+	workspace: Workspace,
+	runId: string,
+	options: FlowWatchOptions = {},
+): Promise<FlowWatchResult> {
+	const runPath = join(flowRunsDir(workspace), runId);
+	if (!existsSync(runPath)) {
+		throw new Error(`Flow run not found: ${runId}`);
+	}
+	const eventsPath = join(runPath, "events.jsonl");
+	const summaryPath = join(runPath, "summary.md");
+	const pollMs = options.pollMs ?? 200;
+	const emit = options.onLine ?? ((line: string) => console.log(line));
+
+	let consumed = 0;
+	let baselineMs = Number.NaN;
+
+	const drain = async (): Promise<void> => {
+		const raw = await Bun.file(eventsPath).text().catch(() => "");
+		// Only consume lines that are fully terminated, so a half-written append
+		// caught mid-poll is picked up on the next pass instead of failing JSON.
+		const lastNewline = raw.lastIndexOf("\n");
+		if (lastNewline === -1) return;
+		const lines = raw.slice(0, lastNewline + 1).split("\n").filter((line) => line.length > 0);
+		for (let index = consumed; index < lines.length; index++) {
+			const event = parseFlowEvent(lines[index]!);
+			if (!event) continue;
+			if (Number.isNaN(baselineMs) && event.ts) {
+				baselineMs = Date.parse(event.ts);
+			}
+			const line = formatFlowEvent(event, Number.isNaN(baselineMs) ? 0 : baselineMs);
+			if (line !== undefined) emit(line);
+		}
+		consumed = lines.length;
+	};
+
+	while (true) {
+		if (options.signal?.aborted) {
+			await drain();
+			return { runId, runPath, finished: false };
+		}
+		await drain();
+		if (existsSync(summaryPath)) {
+			// Flush any events written just before the summary, then stop.
+			await drain();
+			return { runId, runPath, finished: true };
+		}
+		await flowWatchDelay(pollMs, options.signal);
+	}
+}
+
+function parseFlowEvent(line: string): FlowEvent | undefined {
+	try {
+		const value = JSON.parse(line) as FlowEvent;
+		return value && typeof value.type === "string" ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+// Compact one-line render of a single event for the live watch view.
+function formatFlowEvent(event: FlowEvent, baselineMs: number): string | undefined {
+	const at = event.ts ? `${formatElapsed(Date.parse(event.ts) - baselineMs)} ` : "";
+	if (event.type === "log") return `${at}log: ${event.message ?? ""}`;
+	if (event.type === "agent_start") return `${at}${event.name}: start (${event.mode})`;
+	if (event.type === "agent_delta") {
+		const preview = event.preview ? `  ${event.preview}` : "";
+		return `${at}${event.name}: ${event.chars ?? 0} chars${preview}`;
+	}
+	if (event.type === "agent_heartbeat") return `${at}${event.name}: working (${event.chars ?? 0} chars)`;
+	if (event.type === "agent_finish") {
+		return `${at}${event.name}: done in ${event.durationMs ?? 0}ms (${event.chars ?? 0} chars)`;
+	}
+	if (event.type === "agent_error") return `${at}${event.name}: error ${event.error ?? ""}`;
+	return undefined;
+}
+
+function formatElapsed(ms: number): string {
+	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+	return `+${(safe / 1000).toFixed(1)}s`;
+}
+
+function flowWatchDelay(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		if (signal?.aborted) {
+			resolve();
+			return;
+		}
+		const timer = setTimeout(resolve, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
 function createFlowContext(
 	workspace: Workspace,
 	runPath: string,
