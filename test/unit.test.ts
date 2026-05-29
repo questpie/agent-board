@@ -7,7 +7,7 @@ import { createSpec } from "../src/documents.js";
 import { gitState } from "../src/git.js";
 import { atomicWrite } from "../src/utils.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
-import { parseVerifyCommands } from "../src/verify.js";
+import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
 import type { Workspace } from "../src/types.js";
 
 describe("markdown frontmatter", () => {
@@ -128,6 +128,31 @@ describe("verify", () => {
 	test("returns no commands for empty or absent blocks", () => {
 		expect(parseVerifyCommands("## Verify\n\n<!-- none -->\n")).toEqual([]);
 		expect(parseVerifyCommands("## Goal\n\nNothing here.\n")).toEqual([]);
+	});
+
+	test("surfaces output tail for failed commands, keeps passing one-line", async () => {
+		const results = await runVerify(process.cwd(), [
+			"echo hello-pass",
+			"echo boom-marker >&2; exit 3",
+		]);
+		expect(results[0]!.exitCode).toBe(0);
+		expect(results[1]!.exitCode).toBe(3);
+		const evidence = formatVerifyEvidence(results, "2026-05-29T00:00:00.000Z", null);
+		expect(evidence).toContain("- `echo hello-pass` exit=0");
+		expect(evidence).toContain("- `echo boom-marker >&2; exit 3` exit=3");
+		expect(evidence).toContain("boom-marker");
+		expect(evidence).not.toContain("hello-pass\n```");
+	});
+
+	test("kills a hanging command on timeout and records it as failure", async () => {
+		process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS = "200";
+		try {
+			const results = await runVerify(process.cwd(), ["sleep 30"]);
+			expect(results[0]!.exitCode).toBe(124);
+			expect(results[0]!.output).toContain("timed out after");
+		} finally {
+			delete process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS;
+		}
 	});
 });
 

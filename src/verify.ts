@@ -19,11 +19,21 @@ export function parseVerifyCommands(body: string): string[] {
 		.filter((line) => line.length > 0 && !line.startsWith("#") && !line.startsWith("<!--"));
 }
 
+// Default per-command timeout. A hanging verify command must not block the
+// done gate forever, so on expiry we kill the child and record a failure.
+const DEFAULT_VERIFY_TIMEOUT_MS = 600_000;
+
+function verifyTimeoutMs(): number {
+	const raw = Number(process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS);
+	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VERIFY_TIMEOUT_MS;
+}
+
 export async function runVerify(
 	repoPath: string,
 	cmds: string[],
 ): Promise<VerifyResult[]> {
 	const results: VerifyResult[] = [];
+	const timeoutMs = verifyTimeoutMs();
 	for (const cmd of cmds) {
 		const proc = Bun.spawn(["sh", "-c", cmd], {
 			cwd: resolve(repoPath),
@@ -31,12 +41,28 @@ export async function runVerify(
 			stderr: "pipe",
 			env: process.env,
 		});
-		const [stdout, stderr, exitCode] = await Promise.all([
-			new Response(proc.stdout).text(),
-			new Response(proc.stderr).text(),
+		// Drain streams concurrently so a full pipe buffer cannot deadlock exit.
+		const stdoutText = new Response(proc.stdout).text();
+		const stderrText = new Response(proc.stderr).text();
+		let timedOut = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const exitCode = await Promise.race([
 			proc.exited,
+			new Promise<number>((res) => {
+				timer = setTimeout(() => {
+					timedOut = true;
+					proc.kill();
+					res(124);
+				}, timeoutMs);
+			}),
 		]);
-		results.push({ cmd, exitCode, output: (stdout + stderr).slice(-4000) });
+		if (timer) clearTimeout(timer);
+		const [stdout, stderr] = await Promise.all([stdoutText, stderrText]);
+		const captured = (stdout + stderr).slice(-4000);
+		const output = timedOut
+			? `${captured}\ntimed out after ${Math.round(timeoutMs / 1000)}s`.slice(-4000)
+			: captured;
+		results.push({ cmd, exitCode, output });
 	}
 	return results;
 }
@@ -50,9 +76,17 @@ export function formatVerifyEvidence(
 	const lines = [
 		`### verify ${timestamp}${head ? ` @ ${head.slice(0, 8)}` : ""} — ${allPass ? "pass" : "fail"}`,
 		"",
-		...results.map(
-			(result) => `- \`${result.cmd}\` exit=${result.exitCode}`,
-		),
 	];
+	for (const result of results) {
+		lines.push(`- \`${result.cmd}\` exit=${result.exitCode}`);
+		// Surface a tail of output for failures so evidence shows WHY it failed;
+		// passing commands stay one-line to avoid bloating the record.
+		if (result.exitCode !== 0) {
+			const tail = result.output.slice(-800).trim();
+			if (tail.length > 0) {
+				lines.push("", "```", tail, "```");
+			}
+		}
+	}
 	return lines.join("\n");
 }
