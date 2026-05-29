@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, symlink } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace } from "./types.js";
@@ -252,13 +252,11 @@ export async function migrateWorkspace(
 	});
 
 	const goalPath = await ensureGoal(projectPath, DEFAULT_GOAL, "Main");
-	for (const name of ["tasks", "specs", "knowledge"] as const) {
-		const from = join(projectPath, name);
-		const to = join(goalPath, name);
-		if (existsSync(from)) {
-			await copyDirContents(from, to);
-			migrated.push(name);
-		}
+	const legacyTasks = join(projectPath, "tasks");
+	if (existsSync(legacyTasks)) {
+		await copyDirContents(legacyTasks, join(goalPath, "tasks"));
+		await rm(legacyTasks, { recursive: true, force: true });
+		migrated.push("tasks");
 	}
 
 	return {

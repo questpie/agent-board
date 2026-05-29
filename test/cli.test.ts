@@ -212,6 +212,28 @@ Old task.
 		expect(await readFile(join(project, "goals", "main", "tasks", "old-task.md"), "utf-8")).toContain("Old Task");
 	});
 
+	test("migrate moves only tasks and does not duplicate project specs", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-cli-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		const project = join(home, "projects", "demo");
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["spec", "new", "Keep Spec"]);
+		await mkdir(join(project, "tasks"), { recursive: true });
+		await writeFile(
+			join(project, "tasks", "legacy-task.md"),
+			`---\nid: "legacy-task"\ntitle: "Legacy Task"\nstatus: "ready"\npriority: "normal"\ncreated: "2026-05-16T00:00:00.000Z"\nupdated: "2026-05-16T00:00:00.000Z"\n---\n\n## Goal\n\nLegacy task.\n`,
+		);
+
+		await run(cwd, env, ["migrate", "--project", "demo"]);
+
+		expect(existsSync(join(project, "tasks"))).toBe(false);
+		expect(existsSync(join(project, "goals", "main", "tasks", "legacy-task.md"))).toBe(true);
+		const specList = await run(cwd, env, ["spec", "list"]);
+		expect(specList.match(/keep-spec/g)?.length ?? 0).toBe(1);
+	});
+
 	test("claim guards detached HEAD and unfinished dependencies", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-git-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
