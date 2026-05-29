@@ -134,3 +134,12 @@ Pin concurrent workers with:
 ```sh
 AGENT_BOARD_PROJECT=myproj AGENT_BOARD_GOAL=goal-a AGENT_BOARD_REPO=/path/to/worktree agent ...
 ```
+
+## Storage Model
+
+The current backend is local Markdown on disk. Future Linear, S3/R2, DB, or
+custom API integrations should preserve the same task/spec/goal semantics behind
+adapter contracts instead of changing how agents use the CLI.
+
+See [Storage Adapters](storage-adapters.md) for the proposed `BoardStore`,
+`ArtifactStore`, sync, and Autopilot integration model.
