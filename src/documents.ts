@@ -122,23 +122,12 @@ export async function writeKnowledgeBody(
 	return writeScopedDocumentBody(workspace, "knowledge", id, "Knowledge", body, KNOWLEDGE_ORDER);
 }
 
-export async function readScopedDocuments(
+async function readScopedDocuments(
 	workspace: Workspace,
 	kind: "specs" | "knowledge",
 	scope: OverlayScope,
 ): Promise<AgentDocument[]> {
 	return listDocuments(overlayDir(workspace, scope, kind), scope);
-}
-
-export async function resolveSpecRefs(
-	workspace: Workspace,
-	refs: string[],
-): Promise<AgentDocument[]> {
-	const docs: AgentDocument[] = [];
-	for (const ref of refs) {
-		docs.push(await getSpec(workspace, ref));
-	}
-	return docs;
 }
 
 export function parseScope(value: string): OverlayScope {
