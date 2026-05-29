@@ -310,6 +310,35 @@ Old task.
 		expect(loser).toMatch(/lock held|already claimed/);
 	});
 
+	test("parallel status mutations on the same task stay serialized and valid", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-mutrace-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await gitInit(cwd);
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Mutate task", "--status", "ready"]);
+		const path = join(home, "projects", "demo", "goals", "main", "tasks", "mutate-task.md");
+
+		const [a, b] = await Promise.all([
+			runFail(cwd, env, ["block", "mutate-task", "waiting"]),
+			runFail(cwd, env, ["ready", "mutate-task"]),
+		]);
+		const outputs = [a, b];
+		const winners = outputs.filter((out) => /Blocked mutate-task|Ready mutate-task/.test(out));
+		expect(winners.length).toBeGreaterThanOrEqual(1);
+		for (const out of outputs) {
+			if (!winners.includes(out)) expect(out).toMatch(/lock held/);
+		}
+
+		// No lost update / clobbered frontmatter: exactly one frontmatter block,
+		// a single valid status, and the file still parses cleanly.
+		const file = await readFile(path, "utf-8");
+		expect(file.startsWith("---\n")).toBe(true);
+		expect(file.split("\n---\n").length).toBe(2);
+		const status = lineValue(file, "status: ").replaceAll('"', "");
+		expect(["blocked", "ready"]).toContain(status);
+	});
+
 	test("AGENT_BOARD_REPO routes git guards to the override repo", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-mainrepo-"));
 		const worktree = await mkdtemp(join(tmpdir(), "agent-board-wt-"));
