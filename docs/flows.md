@@ -52,6 +52,17 @@ Available context:
 - `log(message)`: write compact lifecycle logs
 - `workspace`: project, goal, and repo metadata
 
+### Agent permissions (`mode`)
+
+`agent(prompt, { mode })` controls what the spawned agent is allowed to do. This is enforced via the runtime permission policy, not just the prompt:
+
+- `mode: "read"` (default): maps to `auto-reject`, which rejects every permission request. Native file reads still work, but **there is no shell access and no edits** — a researcher can read files but any `rg`/`grep`/`find`/`cat` run through the shell is rejected and degrades. This makes read mode genuinely safe for cross-agent reviews.
+- `mode: "write"`: maps to `auto-allow`, granting full write/execute access. Write-heavy flows must opt in explicitly with `{ mode: "write" }`.
+
+The generated templates and ad-hoc fan-out run every role in `read` mode. Each agent's resolved mode is recorded in `summary.md` (e.g. `- reviewer: read, 1234ms, ...`).
+
+A future "allow reads, run read-only shell, reject writes" policy would use the `PermissionPolicy` callback form to inspect each request and allow read-class tools while rejecting write/execute. That is not implemented yet.
+
 ## Artifacts
 
 Each run writes:

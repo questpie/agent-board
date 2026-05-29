@@ -413,6 +413,8 @@ Old task.
 		const agentFiles = await readdir(join(runPath, "agents"));
 		expect(summary).toContain("Runtime: codex");
 		expect(summary).toContain("Mock codex response");
+		expect(summary).toContain("- researcher: read,");
+		expect(summary).toContain("- synthesizer: read,");
 		expect(summary).toContain("## Controller Next");
 		expect(events).not.toContain("Mock codex response");
 		expect(agentFiles.length).toBeGreaterThan(0);

@@ -8,6 +8,7 @@ import { gitState } from "../src/git.js";
 import { atomicWrite } from "../src/utils.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
+import { DEFAULT_FLOW_AGENT_MODE, modeToPermission } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 
 describe("markdown frontmatter", () => {
@@ -153,6 +154,15 @@ describe("verify", () => {
 		} finally {
 			delete process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS;
 		}
+	});
+});
+
+describe("flow agent mode", () => {
+	test("maps read to auto-reject and write to auto-allow, defaulting to read", () => {
+		expect(DEFAULT_FLOW_AGENT_MODE).toBe("read");
+		expect(modeToPermission("read")).toBe("auto-reject");
+		expect(modeToPermission("write")).toBe("auto-allow");
+		expect(modeToPermission(DEFAULT_FLOW_AGENT_MODE)).toBe("auto-reject");
 	});
 });
 

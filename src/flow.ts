@@ -12,6 +12,18 @@ export const FLOW_TEMPLATES = ["default", "feature", "review", "fix"] as const;
 
 export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
 
+export type FlowAgentMode = "read" | "write";
+
+export const DEFAULT_FLOW_AGENT_MODE: FlowAgentMode = "read";
+
+// Maps the agent-facing flow mode onto a spawn-agent PermissionPolicy value.
+// "read" -> "auto-reject" rejects every permission request, which also blocks
+// shell execution, so read mode means native file reads only (no shell, no edits).
+// "write" -> "auto-allow" grants the agent full write/execute permission.
+export function modeToPermission(mode: FlowAgentMode): "auto-reject" | "auto-allow" {
+	return mode === "write" ? "auto-allow" : "auto-reject";
+}
+
 export interface FlowRunOptions {
 	target: string;
 	input?: string;
@@ -51,12 +63,14 @@ interface FlowAgentOptions {
 	system?: string;
 	cwd?: string;
 	timeoutMs?: number;
+	mode?: FlowAgentMode;
 }
 
 interface FlowAgentResult {
 	name: string;
 	prompt: string;
 	text: string;
+	mode: FlowAgentMode;
 	started: string;
 	finished: string;
 	durationMs: number;
@@ -280,15 +294,17 @@ function createFlowContext(
 		agent: async (prompt, agentOptions = {}) => {
 			const callIndex = ++agentIndex;
 			const name = agentOptions.name ?? `agent-${callIndex}`;
+			const mode = agentOptions.mode ?? DEFAULT_FLOW_AGENT_MODE;
 			const started = nowIso();
-			await writeEvent(runPath, "agent_start", { name, promptChars: prompt.length });
-			console.log(`agent ${name}: start`);
+			await writeEvent(runPath, "agent_start", { name, mode, promptChars: prompt.length });
+			console.log(`agent ${name}: start (${mode})`);
 			const startedMs = Date.now();
 			const diagnostics: FlowDiagnostic[] = [];
 			let text: string;
 			try {
 				text = await runAgentPrompt(options.runtime, prompt, {
 					...agentOptions,
+					mode,
 					cwd: agentOptions.cwd ?? workspace.repoPath,
 					diagnostics,
 					verbose: options.verbose,
@@ -311,6 +327,7 @@ function createFlowContext(
 				name,
 				prompt,
 				text,
+				mode,
 				started,
 				finished: nowIso(),
 				durationMs: Date.now() - startedMs,
@@ -320,6 +337,7 @@ function createFlowContext(
 			state.agents.push(result);
 			await writeEvent(runPath, "agent_finish", {
 				name,
+				mode,
 				durationMs: result.durationMs,
 				outputPath,
 				chars: text.length,
@@ -428,7 +446,7 @@ async function runAgentPrompt(
 	const result = await generateText({
 		model: spawnAgent(runtime, {
 			cwd: options.cwd,
-			permission: "auto-allow",
+			permission: modeToPermission(options.mode ?? DEFAULT_FLOW_AGENT_MODE),
 			inactivityTimeoutMs: options.timeoutMs ?? 180_000,
 			onStderr: (line: string) => {
 				const diagnostic = summarizeDiagnostic(line);
@@ -548,7 +566,7 @@ function formatSummary(input: {
 	const agents = input.agents
 		.map((agent) => {
 			const diagnostics = agent.diagnostics ? `, diagnostics: ${agent.diagnostics}` : "";
-			return `- ${agent.name}: ${agent.durationMs}ms, output: ${agent.outputPath}${diagnostics}`;
+			return `- ${agent.name}: ${agent.mode}, ${agent.durationMs}ms, output: ${agent.outputPath}${diagnostics}`;
 		})
 		.join("\n") || "- none";
 	return [
@@ -756,7 +774,7 @@ function roleFlowTemplate(
 	const workers = ${JSON.stringify(roles, null, "\t")};
 
 	const results = await parallel(workers, (worker) =>
-		agent(\`\${worker.brief}\\n\\nGoal:\\n\${goal}\`, { name: worker.name }),
+		agent(\`\${worker.brief}\\n\\nGoal:\\n\${goal}\`, { name: worker.name, mode: "read" }),
 	);
 
 	const findings = results
@@ -765,7 +783,7 @@ function roleFlowTemplate(
 
 	const summary = await agent(
 		\`Do not edit files. ${summaryInstruction}\\n\\nGoal:\\n\${goal}\\n\\nWorker outputs:\\n\${findings}\`,
-		{ name: "synthesizer" },
+		{ name: "synthesizer", mode: "read" },
 	);
 
 	return summary.text;

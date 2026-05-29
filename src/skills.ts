@@ -278,7 +278,7 @@ Safe defaults:
 - Use Codex runtime first.
 - Same worktree is acceptable for P0 when the generated script prevents agents from fighting: no branch switching, no commits, no resets/rebases, no overlapping file edits, and no concurrent git operations from spawned agents.
 - For true concurrent write-heavy work, prefer one git worktree per writer and pass \`AGENT_BOARD_REPO\`.
-- Cross-agent reviews should be read-only unless the controller explicitly creates a fix task.
+- Flow agents default to \`mode: "read"\` (enforced via \`auto-reject\`: native file reads only, no shell, no edits). Cross-agent reviews and research stay read-only; only opt a role into \`mode: "write"\` when the controller explicitly wants it to edit.
 - The controller owns git state and final decisions. Spawned agents do not choose branches, commit policy, or roadmap.
 
 Agent-side command pattern:
