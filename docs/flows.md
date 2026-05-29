@@ -7,11 +7,19 @@ The CLI is not meant to be a human workflow builder. Humans can speak naturally;
 ## Commands
 
 ```sh
-agent-board flow new <name>
-# agent edits ~/.agent-board/projects/<project>/flows/<name>.mjs
+agent-board flow new <name> --template feature
+agent-board flow cat <name>
+agent-board flow write <name> --from ./flow.mjs
 agent-board flow run <name> --input "<scope>" --task <task-id>
 agent-board flow show <run-id>
 ```
+
+Templates:
+
+- `default`: general read-only fan-out
+- `feature`: feature planning, test planning, and synthesis
+- `review`: cross-agent review
+- `fix`: reproduction, localization, regression-test planning
 
 For quick read-only fan-out:
 
@@ -73,8 +81,8 @@ For non-trivial work:
 1. Confirm project and goal with `agent-board status`.
 2. Write or update a spec.
 3. Split the feature into linked tasks.
-4. Create a flow script with `agent-board flow new <name>`.
-5. Edit the script to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
+4. Create a flow script with `agent-board flow new <name> --template <kind>`.
+5. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
 6. Summarize the phases to the user.
 7. Run the script after approval or explicit go-ahead.
 8. Read `summary.md`, update board state, and decide the next wave.

@@ -123,6 +123,22 @@ export async function getTask(
 	return readTaskFile(path);
 }
 
+export async function writeTaskBody(
+	workspace: Workspace,
+	id: string,
+	body: string,
+): Promise<TaskFile> {
+	const taskPath = join(taskDir(workspace), `${id}.md`);
+	return withTaskLock(taskPath, async () => updateTask(workspace, id, (task) => {
+		const nextBody = normalizeBody(body);
+		if (task.body !== nextBody) {
+			task.meta.verified = "";
+			task.meta.verified_sha = "";
+		}
+		task.body = nextBody;
+	}));
+}
+
 export async function setTaskStatus(
 	workspace: Workspace,
 	id: string,
@@ -377,4 +393,8 @@ export function appendEvidence(body: string, entry: string): string {
 
 function unique(values: string[]): string[] {
 	return [...new Set(values.filter(Boolean))];
+}
+
+function normalizeBody(body: string): string {
+	return body.endsWith("\n") ? body : `${body}\n`;
 }

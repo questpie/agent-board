@@ -25,6 +25,8 @@ agent-board tasks [--status <status>] [--all]
 agent-board status
 agent-board next
 agent-board show <task-id>
+agent-board task cat <task-id>
+agent-board task write <task-id> --from <file|->
 agent-board new <title> [--status <status>] [--priority <priority>]
 agent-board claim <task-id> [--agent <name>] [--allow-detached]
 agent-board verify <task-id>
@@ -53,21 +55,36 @@ Important behavior:
 agent-board spec new <title> [--scope global|project|goal]
 agent-board spec list [--scope global|project|goal]
 agent-board spec show <spec-id>
+agent-board spec cat <spec-id>
+agent-board spec write <spec-id> --from <file|->
 
 agent-board knowledge add <title> [--kind decision|note|gotcha] [--scope global|project|goal]
 agent-board knowledge list [--scope global|project|goal]
+agent-board knowledge cat <knowledge-id>
+agent-board knowledge write <knowledge-id> --from <file|->
 ```
+
+`cat` prints body content without frontmatter. `write` replaces body content
+while preserving CLI-owned metadata.
 
 ## Flows
 
 ```sh
-agent-board flow new <name> [--force]
+agent-board flow new <name> [--template default|feature|review|fix] [--force]
 agent-board flow list
+agent-board flow cat <name>
+agent-board flow write <name> --from <file|->
 agent-board flow run <name-or-path-or-goal> [--input <text>] [--task <task-id>] [--runtime codex] [--agents <n>] [--concurrency <n>] [--verbose]
 agent-board flow show <run-id>
 ```
 
-`flow new` prints the script path and next action for the controller agent.
+`flow new` prints the template, script path, and next action for the controller
+agent. Templates are simple editable JavaScript scripts:
+
+- `default`: researcher + critic + synthesis
+- `feature`: researcher + planner + tester + synthesis
+- `review`: reviewer + test auditor + risk reviewer + synthesis
+- `fix`: reproducer + locator + test planner + synthesis
 
 `flow run` prints:
 

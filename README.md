@@ -88,11 +88,14 @@ agent-board flow run "Find the highest-risk missing tests" --agents 3 --concurre
 Agent-written reusable flow:
 
 ```sh
-agent-board flow new audit
-# agent edits ~/.agent-board/projects/<project>/flows/audit.mjs
+agent-board flow new audit --template review
+agent-board flow cat audit
+agent-board flow write audit --from ./audit-flow.mjs
 agent-board flow run audit --input "Audit deploy pipeline" --task deploy-audit
 agent-board flow show <run-id>
 ```
+
+Templates: `default`, `feature`, `review`, `fix`.
 
 Flow runs write:
 
@@ -108,6 +111,7 @@ Raw Codex/ACP stderr is quiet by default; use `--verbose` only when debugging th
 ## Concepts
 
 State lives under `~/.agent-board` by default. Repositories are registered by path, tasks belong to goals, and specs/knowledge support global, project, and goal overlays.
+Agents should prefer explicit subcommands such as `task cat/write`, `spec cat/write`, `knowledge cat/write`, and `flow cat/write`; filesystem paths are a convenience of the default local driver.
 
 Read the deeper docs:
 

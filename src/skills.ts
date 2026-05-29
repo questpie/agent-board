@@ -19,7 +19,7 @@ Use when controlling agent-board work: goals, specs, task graph, delegation, flo
 2. Read the relevant task/specs/knowledge before deciding.
 3. For broad work, create or choose a goal, write a spec, then split into linked tasks. Subtasks are small linked tasks, not checklist prose.
 4. Delegate ready implementation to workers that use \`agent-board-worker\` and a specific task id.
-5. Use \`agent-board flow new\` + edit the script for multi-agent fan-out, reviews, or synthesis. Run it after user approval unless execution was already explicit.
+5. Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, then run multi-agent fan-out, reviews, or synthesis after user approval unless execution was already explicit.
 6. Read \`summary.md\` first; inspect \`agents/*.md\` or \`diagnostics.jsonl\` only when needed.
 7. Update tasks/specs/knowledge from evidence, then choose the next wave.
 
@@ -34,7 +34,7 @@ Use when controlling agent-board work: goals, specs, task graph, delegation, flo
 - \`agent-board status\`, \`agent-board plan --related\`
 - \`agent-board goal new/use\`, \`agent-board spec new\`, \`agent-board knowledge add\`
 - \`agent-board new\`, \`agent-board link <from> --blocks <to>\`, \`agent-board block <task> "<reason>"\`
-- \`agent-board flow new <name>\`, edit the script, then \`agent-board flow run <name>\`
+- \`agent-board task/spec/knowledge cat|write\`, \`agent-board flow new <name> --template feature|review|fix\`, \`agent-board flow cat|write\`, \`agent-board flow run <name>\`
 
 ## References
 
@@ -52,7 +52,7 @@ export const skillAgents = `# Agent Board Rules
 - Controller mode: plan, create specs/tasks, link blockers, delegate, review evidence. Do not claim/edit implementation tasks unless explicitly asked.
 - Broad features become a goal/spec plus linked tasks; subtasks are first-class tasks, not hidden checklist prose.
 - Worker delegation must include a concrete task id and the \`agent-board-worker\` skill.
-- Use \`agent-board flow new\`, edit the script, summarize phases, then \`flow run\` after approval or explicit go-ahead.
+- Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, summarize phases, then \`flow run\` after approval or explicit go-ahead.
 - Read flow \`summary.md\` before per-agent outputs; open \`diagnostics.jsonl\` only for runtime debugging.
 - Keep task Markdown concise; logs stay in flow/run folders.
 `;
@@ -260,8 +260,8 @@ The controller loop is:
 2. Write or update the feature spec.
 3. Break the feature into linked tasks. Subtasks are first-class tasks linked with blockers/dependencies.
 4. For non-trivial orchestration, create a workflow script:
-   - run \`agent-board flow new <name>\`
-   - edit the generated \`.mjs\` script directly
+   - run \`agent-board flow new <name> --template feature|review|fix\`
+   - inspect/edit the generated script with \`agent-board flow cat/write\`
    - encode phases, fan-out, reviews, synthesis, and task/evidence updates in the script
    - summarize the script's phases to the user and ask for confirmation before running, unless the user already explicitly approved execution
 5. Run a flow wave for the next uncertainty or work batch:
@@ -284,8 +284,9 @@ Safe defaults:
 Agent-side command pattern:
 
 \`\`\`sh
-agent-board flow new <name>
-# edit ~/.agent-board/projects/<project>/flows/<name>.mjs
+agent-board flow new <name> --template feature
+agent-board flow cat <name>
+agent-board flow write <name> --from ./flow.mjs
 agent-board flow run <name> --input "<scope>" --task <task-id>
 \`\`\`
 

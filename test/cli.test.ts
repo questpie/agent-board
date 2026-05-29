@@ -82,6 +82,62 @@ describe("cli", () => {
 		expect(await run(cwd, env, ["knowledge", "list"])).toContain("global");
 	});
 
+	test("reads and writes task, spec, and knowledge bodies through subcommands", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-body-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Body Task", "--status", "ready"]);
+		const taskBody = await run(cwd, env, ["task", "cat", "body-task"]);
+		expect(taskBody).toContain("## Goal");
+		expect(taskBody).not.toContain("---");
+
+		expect(await runWithInput(cwd, env, ["task", "write", "body-task", "--from", "-"], "## Goal\n\nUpdated from stdin.\n")).toContain(
+			"Wrote task body-task",
+		);
+		expect(await run(cwd, env, ["task", "cat", "body-task"])).toContain("Updated from stdin");
+		expect(await run(cwd, env, ["show", "body-task"])).toContain('title: "Body Task"');
+
+		await runWithInput(
+			cwd,
+			env,
+			["task", "write", "body-task", "--from", "-"],
+			"## Goal\n\nVerified body.\n\n## Acceptance Criteria\n\n- [x] Define success criteria.\n\n## Verify\n\n```sh\ntrue\n```\n",
+		);
+		expect(await run(cwd, env, ["verify", "body-task"])).toContain("Verified body-task");
+		expect(await run(cwd, env, ["show", "body-task"])).toContain("verified_sha:");
+		await runWithInput(
+			cwd,
+			env,
+			["task", "write", "body-task", "--from", "-"],
+			"## Goal\n\nChanged after verify.\n",
+		);
+		const rewrittenTask = await run(cwd, env, ["show", "body-task"]);
+		expect(rewrittenTask).toContain('verified: ""');
+		expect(rewrittenTask).toContain('verified_sha: ""');
+
+		await run(cwd, env, ["spec", "new", "Driver Spec"]);
+		const specBodyPath = join(cwd, "spec-body.md");
+		await writeFile(specBodyPath, "## Context\n\nDriver body.\n");
+		expect(await run(cwd, env, ["spec", "cat", "driver-spec"])).not.toContain("---");
+		expect(await run(cwd, env, ["spec", "write", "driver-spec", "--from", specBodyPath])).toContain(
+			"Wrote spec project/driver-spec",
+		);
+		expect(await run(cwd, env, ["spec", "cat", "driver-spec"])).toContain("Driver body");
+		expect(await run(cwd, env, ["spec", "show", "driver-spec"])).toContain('title: "Driver Spec"');
+
+		await run(cwd, env, ["knowledge", "add", "Driver Note", "--kind", "decision"]);
+		const knowledgeBodyPath = join(cwd, "knowledge-body.md");
+		await writeFile(knowledgeBodyPath, "## Decision\n\nUse subcommands as the store boundary.\n");
+		expect(await run(cwd, env, ["knowledge", "cat", "driver-note"])).not.toContain("---");
+		expect(await run(cwd, env, ["knowledge", "write", "driver-note", "--from", knowledgeBodyPath])).toContain(
+			"Wrote knowledge project/driver-note",
+		);
+		expect(await run(cwd, env, ["knowledge", "cat", "driver-note"])).toContain("store boundary");
+		expect(await run(cwd, env, ["knowledge", "list"])).toContain("driver-note");
+	});
+
 	test("shows related project work in plan", async () => {
 		const cwdA = await mkdtemp(join(tmpdir(), "agent-board-a-"));
 		const cwdB = await mkdtemp(join(tmpdir(), "agent-board-b-"));
@@ -260,9 +316,11 @@ Old task.
 		await run(cwd, env, ["init", "--project", "demo"]);
 		const created = await run(cwd, env, ["flow", "new", "Audit Repo"]);
 		expect(created).toContain("Created flow audit-repo");
-		expect(created).toContain("Next: edit the script");
+		expect(created).toContain("Template: default");
+		expect(created).toContain("Next: inspect or edit the script");
 		const flowPath = lineValue(created, "Script: ");
 		expect(await readFile(flowPath, "utf-8")).toContain("export default async function flow");
+		expect(await run(cwd, env, ["flow", "cat", "audit-repo"])).toContain("researcher");
 		expect(await run(cwd, env, ["flow", "list"])).toContain("audit-repo");
 
 		await run(cwd, env, ["new", "Flow Task", "--status", "ready"]);
@@ -292,6 +350,71 @@ Old task.
 		expect(await readFile(join(runPath, "agents", agentFiles[0]!), "utf-8")).toContain("Mock codex response");
 		expect(await run(cwd, env, ["flow", "show", basename(dirname(summaryPath))])).toContain("## Controller Next");
 		expect(await readFile(join(home, "projects", "demo", "goals", "main", "tasks", "flow-task.md"), "utf-8")).toContain("[flow]");
+
+		const replacementPath = join(cwd, "replacement-flow.mjs");
+		await writeFile(replacementPath, "export default async function flow() {\n\treturn \"replacement\";\n}\n");
+		expect(await run(cwd, env, ["flow", "write", "audit-repo", "--from", replacementPath])).toContain(
+			"Wrote flow audit-repo",
+		);
+		expect(await run(cwd, env, ["flow", "cat", "audit-repo"])).toContain("replacement");
+
+		const readmePath = join(cwd, "README.md");
+		await writeFile(readmePath, "keep me");
+		const pathWrite = await runFail(cwd, env, ["flow", "write", readmePath, "--from", replacementPath]);
+		expect(pathWrite).toContain("Expected a project flow name");
+		expect(await readFile(readmePath, "utf-8")).toBe("keep me");
+	});
+
+	test("creates flow templates and validates template names", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-template-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home, AGENT_BOARD_FLOW_MOCK: "1" };
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		const cases = [
+			["default", "critic"],
+			["feature", "planner"],
+			["review", "risk-reviewer"],
+			["fix", "reproducer"],
+		] as const;
+
+		for (const [template, marker] of cases) {
+			const output = await run(cwd, env, [
+				"flow",
+				"new",
+				`${template} flow`,
+				"--template",
+				template,
+			]);
+			expect(output).toContain(`Template: ${template}`);
+			const path = lineValue(output, "Script: ");
+			expect(await readFile(path, "utf-8")).toContain(marker);
+		}
+
+		const escaped = await run(cwd, env, [
+			"flow",
+			"new",
+			"weird ${goal}",
+			"--template",
+			"feature",
+		]);
+		expect(await readFile(lineValue(escaped, "Script: "), "utf-8")).toContain(
+			'const flowName = "weird ${goal}"',
+		);
+
+		const invalid = await runFail(cwd, env, ["flow", "new", "Bad Flow", "--template", "unknown"]);
+		expect(invalid).toContain("Invalid flow template");
+		expect(existsSync(join(home, "projects", "demo", "flows", "bad-flow.mjs"))).toBe(false);
+
+		const collision = await runFail(cwd, env, ["flow", "new", "fix flow"]);
+		expect(collision).toContain("Flow already exists");
+		const overwritten = await run(cwd, env, ["flow", "new", "fix flow", "--force", "--template", "fix"]);
+		expect(overwritten).toContain("Template: fix");
+
+		const runOutput = await run(cwd, env, ["flow", "run", "fix-flow", "--input", "Fix command boundary"]);
+		const summary = await readFile(lineValue(runOutput, "Summary: "), "utf-8");
+		expect(summary).toContain("Mock codex response");
+		expect(summary).toContain("reproducer");
 	});
 
 	test("flow run validates task id before starting agents", async () => {
@@ -338,6 +461,30 @@ async function run(
 		stdout: "pipe",
 		stderr: "pipe",
 	});
+	const [stdout, stderr, exitCode] = await Promise.all([
+		new Response(proc.stdout).text(),
+		new Response(proc.stderr).text(),
+		proc.exited,
+	]);
+	if (exitCode !== 0) throw new Error(`${stdout}\n${stderr}`);
+	return stdout + stderr;
+}
+
+async function runWithInput(
+	cwd: string,
+	env: Record<string, string | undefined>,
+	args: string[],
+	input: string,
+): Promise<string> {
+	const proc = Bun.spawn(["bun", cli, ...args], {
+		cwd,
+		env,
+		stdin: "pipe",
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	proc.stdin.write(input);
+	proc.stdin.end();
 	const [stdout, stderr, exitCode] = await Promise.all([
 		new Response(proc.stdout).text(),
 		new Response(proc.stderr).text(),

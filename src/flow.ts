@@ -8,6 +8,10 @@ import { atomicWrite, ensureDir, nowIso, slugify } from "./utils.js";
 
 export type FlowRuntime = "codex" | "claude" | "opencode";
 
+export const FLOW_TEMPLATES = ["default", "feature", "review", "fix"] as const;
+
+export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
+
 export interface FlowRunOptions {
 	target: string;
 	input?: string;
@@ -97,7 +101,7 @@ interface FlowRunState {
 export async function createFlow(
 	workspace: Workspace,
 	name: string,
-	options: { force?: boolean } = {},
+	options: { force?: boolean; template?: FlowTemplate } = {},
 ): Promise<FlowFile> {
 	const dir = flowDir(workspace);
 	await ensureDir(dir);
@@ -106,7 +110,7 @@ export async function createFlow(
 	if (existsSync(path) && !options.force) {
 		throw new Error(`Flow already exists: ${id}. Use --force to overwrite.`);
 	}
-	await atomicWrite(path, defaultFlowTemplate(name));
+	await atomicWrite(path, flowTemplate(name, options.template ?? "default"));
 	return { name: id, path };
 }
 
@@ -120,6 +124,32 @@ export async function listFlows(workspace: Workspace): Promise<FlowFile[]> {
 			path: join(dir, entry.name),
 		}))
 		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function readFlowScript(
+	workspace: Workspace,
+	name: string,
+): Promise<{ name: string; path: string; body: string }> {
+	assertFlowName(name);
+	const path = projectFlowScript(workspace, name);
+	if (!path) throw new Error(`Flow script not found: ${name}`);
+	return {
+		name: basename(path, extname(path)),
+		path,
+		body: await Bun.file(path).text(),
+	};
+}
+
+export async function writeFlowScript(
+	workspace: Workspace,
+	name: string,
+	body: string,
+): Promise<FlowFile> {
+	assertFlowName(name);
+	const path = projectFlowScript(workspace, name) ?? flowPathForName(workspace, name);
+	await ensureDir(flowDir(workspace));
+	await atomicWrite(path, body.endsWith("\n") ? body : `${body}\n`);
+	return { name: basename(path, extname(path)), path };
 }
 
 export async function runFlow(
@@ -205,6 +235,13 @@ export function flowRunsDir(workspace: Workspace): string {
 export function parseFlowRuntime(value: string): FlowRuntime {
 	validateRuntime(value);
 	return value;
+}
+
+export function parseFlowTemplate(value: string): FlowTemplate {
+	if (!FLOW_TEMPLATES.includes(value as FlowTemplate)) {
+		throw new Error(`Invalid flow template. Expected one of: ${FLOW_TEMPLATES.join(", ")}`);
+	}
+	return value as FlowTemplate;
 }
 
 export function parsePositiveInt(value: string, name: string): number {
@@ -439,6 +476,22 @@ function resolveFlowScript(workspace: Workspace, target: string): string | undef
 	return undefined;
 }
 
+function projectFlowScript(workspace: Workspace, target: string): string | undefined {
+	return [".mjs", ".js", ".ts"]
+		.map((extension) => join(flowDir(workspace), `${slugify(target)}${extension}`))
+		.find((path) => existsSync(path));
+}
+
+function flowPathForName(workspace: Workspace, name: string): string {
+	return join(flowDir(workspace), `${slugify(name)}.mjs`);
+}
+
+function assertFlowName(name: string): void {
+	if (isPathLike(name)) {
+		throw new Error("Expected a project flow name, not a filesystem path.");
+	}
+}
+
 function resolveCandidate(cwd: string, target: string): string | undefined {
 	const path = isAbsolute(target) ? target : resolve(cwd, target);
 	return existsSync(path) ? path : undefined;
@@ -626,25 +679,84 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 	return error instanceof Error && "code" in error;
 }
 
-function defaultFlowTemplate(name: string): string {
-	const title = name.replace(/`/g, "");
-	return `export default async function flow({ input, agent, parallel, log }) {
-	const goal = input || ${JSON.stringify(`Inspect ${title} and recommend the next steps.`)};
-	await log(\`running ${title}: \${goal}\`);
+function flowTemplate(name: string, template: FlowTemplate): string {
+	const fallback = `Inspect ${name} and recommend the next steps.`;
+	if (template === "default") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "researcher",
+				brief: "Inspect the repository for this goal. Do not edit files. Return relevant files, current behavior, and useful facts.",
+			},
+			{
+				name: "critic",
+				brief: "Look for risks, edge cases, and missing tests for this goal. Do not edit files. Return concrete findings only.",
+			},
+		], "Synthesize this into a concise final report with decision, findings, and next steps.");
+	}
+	if (template === "feature") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "researcher",
+				brief: "Inspect the repository for the requested feature. Do not edit files. Return relevant architecture, files, and constraints.",
+			},
+			{
+				name: "planner",
+				brief: "Create the smallest practical implementation plan. Do not edit files. Include sequencing, affected files, and acceptance criteria.",
+			},
+			{
+				name: "tester",
+				brief: "Identify the most important tests and verification commands for this feature. Do not edit files.",
+			},
+		], "Synthesize this into an implementation checklist with files, tests, risks, and controller next steps.");
+	}
+	if (template === "review") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "reviewer",
+				brief: "Review the current changes for bugs, regressions, and unclear behavior. Do not edit files. Lead with concrete findings.",
+			},
+			{
+				name: "test-auditor",
+				brief: "Review test coverage for the current changes. Do not edit files. Return missing or weak tests.",
+			},
+			{
+				name: "risk-reviewer",
+				brief: "Review operational, migration, concurrency, and compatibility risks. Do not edit files. Return concrete risks only.",
+			},
+		], "Synthesize this into a code-review style report with findings first, then tests and next steps.");
+	}
+	return roleFlowTemplate(name, template, fallback, [
+		{
+			name: "reproducer",
+			brief: "Understand the bug or failure. Do not edit files. Return reproduction clues, likely failing paths, and commands to verify.",
+		},
+		{
+			name: "locator",
+			brief: "Inspect the repository to locate the likely source of the bug. Do not edit files. Return files, functions, and reasoning.",
+		},
+		{
+			name: "test-planner",
+			brief: "Design focused regression tests for the fix. Do not edit files. Return test cases and commands.",
+		},
+	], "Synthesize this into a fix checklist with suspected cause, patch plan, regression tests, and risks.");
+}
 
-	const workers = [
-		{
-			name: "researcher",
-			prompt: \`Inspect the repository for this goal. Do not edit files. Return relevant files, current behavior, and useful facts.\\n\\nGoal:\\n\${goal}\`,
-		},
-		{
-			name: "critic",
-			prompt: \`Look for risks, edge cases, and missing tests for this goal. Do not edit files. Return concrete findings only.\\n\\nGoal:\\n\${goal}\`,
-		},
-	];
+function roleFlowTemplate(
+	name: string,
+	template: FlowTemplate,
+	fallback: string,
+	roles: Array<{ name: string; brief: string }>,
+	summaryInstruction: string,
+): string {
+	return `export default async function flow({ input, agent, parallel, log }) {
+	const flowName = ${JSON.stringify(name)};
+	const goal = input || ${JSON.stringify(fallback)};
+	await log(\`running ${template} flow for \${flowName}: \${goal}\`);
+
+	const workers = ${JSON.stringify(roles, null, "\t")};
 
 	const results = await parallel(workers, (worker) =>
-		agent(worker.prompt, { name: worker.name }),
+		agent(\`\${worker.brief}\\n\\nGoal:\\n\${goal}\`, { name: worker.name }),
 	);
 
 	const findings = results
@@ -652,7 +764,7 @@ function defaultFlowTemplate(name: string): string {
 		.join("\\n\\n");
 
 	const summary = await agent(
-		\`Synthesize this into a concise final report with decision, findings, and next steps.\\n\\nGoal:\\n\${goal}\\n\\nWorker outputs:\\n\${findings}\`,
+		\`Do not edit files. ${summaryInstruction}\\n\\nGoal:\\n\${goal}\\n\\nWorker outputs:\\n\${findings}\`,
 		{ name: "synthesizer" },
 	);
 

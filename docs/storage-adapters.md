@@ -99,18 +99,16 @@ These commands already express durable board transitions well:
 | task lifecycle | `new`, `tasks`, `status`, `show`, `claim`, `block`, `ready`, `unblock`, `review`, `verify`, `done` |
 | task graph | `link --blocks`, `link --spec`, `plan`, `next` |
 | specs/knowledge create/read | `spec new`, `spec list`, `spec show`, `knowledge add`, `knowledge list` |
-| flows run/read | `flow new`, `flow list`, `flow run`, `flow show` |
+| flows run/read/write | `flow new`, `flow list`, `flow cat`, `flow write`, `flow run`, `flow show` |
 
-The store-driver refactor should add explicit write/update commands for the
-places that still assume direct local file editing:
+The store-driver refactor starts by making body/script operations explicit:
 
-| Resource | Needed command shape |
+| Resource | Command boundary |
 | --- | --- |
-| task body/frontmatter | `agent-board task write <id> --from <file|->` or narrower `task set` fields |
-| acceptance criteria / verify block | `agent-board task criteria`, `agent-board task verify-command` |
-| spec body | `agent-board spec write <id> --from <file|->` |
-| knowledge body | `agent-board knowledge write <id> --from <file|->` |
-| flow script | `agent-board flow write <name> --from <file|->` and `flow cat <name>` |
+| task body | `agent-board task cat <id>`, `agent-board task write <id> --from <file|->` |
+| spec body | `agent-board spec cat <id>`, `agent-board spec write <id> --from <file|->` |
+| knowledge body | `agent-board knowledge cat <id>`, `agent-board knowledge write <id> --from <file|->` |
+| flow script | `agent-board flow cat <name>`, `agent-board flow write <name> --from <file|->` |
 
 For the filesystem driver these commands can still read/write Markdown files.
 For Linear/API/R2/DB they become the portable mutation API.
