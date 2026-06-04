@@ -52,8 +52,67 @@ Available context:
 - `input`: `--input` text, or the ad-hoc target for unscripted runs
 - `agent(prompt, options)`: spawn a local coding agent
 - `parallel(items, worker)`: run tasks with the CLI concurrency limit
+- `pipeline(items, ...stages)`: run ordered stages across many items with the CLI concurrency limit
 - `log(message)`: write compact lifecycle logs
 - `workspace`: project, goal, and repo metadata
+
+Flow scripts may also export metadata:
+
+```js
+export const meta = {
+	name: "docs-audit",
+	description: "Evaluate, verify, synthesize, and report on docs quality.",
+	phases: [
+		{ title: "Evaluate", detail: "fan out by docs group" },
+		{ title: "Verify", detail: "adversarial source-code checks" },
+		{ title: "Report", detail: "deduplicated final markdown" },
+	],
+};
+```
+
+Metadata is recorded in `summary.md` and compact lifecycle logs.
+
+### Big-Job Primitives
+
+Use `pipeline` when a large workflow needs ordered stages per item:
+
+```js
+export default async function flow({ agent, pipeline }) {
+	const groups = ["backend", "frontend", "production"];
+
+	return pipeline(
+		groups,
+		(group) => agent(`Audit ${group}`, { phase: "Evaluate", label: `eval:${group}` }),
+		(evalResult, group) => agent(`Verify ${group}\n\n${evalResult.text}`, { phase: "Verify", label: `verify:${group}` }),
+	);
+}
+```
+
+Each stage runs across all items with the run's `--concurrency` limit before the next stage begins. The stage callback receives `(value, originalItem, index)`, so later stages can use both the previous stage result and the original item.
+
+Use `agent(..., { schema })` when downstream stages need reliable JSON:
+
+```js
+const FINDING_SCHEMA = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		summary: { type: "string" },
+		severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
+	},
+	required: ["summary", "severity"],
+};
+
+const result = await agent("Return one finding.", {
+	phase: "Evaluate",
+	label: "eval:auth",
+	schema: FINDING_SCHEMA,
+});
+
+console.log(result.json.severity);
+```
+
+Structured outputs are validated before the agent finishes. The parsed JSON is available as `result.json`, and the run writes a sibling `.json` artifact next to that agent's markdown output. Supported schema keywords are `type`, `properties`, `required`, `items`, `enum`, and `additionalProperties`.
 
 ### Agent permissions (`mode`)
 
@@ -87,6 +146,9 @@ Read order:
 3. `diagnostics.jsonl` only for runtime or MCP issues
 
 Raw agent stderr is quiet by default. Use `--verbose` only when debugging the runtime.
+For Codex runtime on macOS, agent-board runs the bundled native `codex-acp`
+binary directly when it is available. Set `AGENT_BOARD_CODEX_ACP_BIN` only when
+you need to pin a different ACP executable for Keychain stability.
 
 ### `events.jsonl` schema
 

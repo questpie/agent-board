@@ -500,6 +500,73 @@ Old task.
 		);
 	});
 
+	test("runs big-job flow primitives with metadata, pipeline, and structured output", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-big-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = {
+			...process.env,
+			AGENT_BOARD_HOME: home,
+			AGENT_BOARD_FLOW_MOCK: "1",
+			AGENT_BOARD_FLOW_MOCK_JSON: '{"summary":"ok","count":1}',
+		};
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		const scriptPath = join(cwd, "big-flow.mjs");
+		await writeFile(
+			scriptPath,
+			`
+export const meta = {
+	name: "big-flow",
+	description: "Exercise staged structured flow primitives.",
+	phases: [
+		{ title: "Evaluate", detail: "two schema agents" },
+		{ title: "Rollup", detail: "plain JS synthesis" },
+	],
+};
+
+const schema = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		summary: { type: "string" },
+		count: { type: "integer" },
+	},
+	required: ["summary", "count"],
+};
+
+export default async function flow({ agent, pipeline, parallel }) {
+	const rows = await pipeline(
+		["alpha", "beta"],
+		(item) => agent("Return JSON for " + item, { phase: "Evaluate", label: "eval:" + item, schema }),
+		(result, original) => ({ original, summary: result.json.summary, count: result.json.count }),
+	);
+	const rolled = await parallel(rows, async (row) => row.original + ":" + row.count);
+	return { rows, rolled };
+}
+`,
+		);
+		await run(cwd, env, ["flow", "write", "big-flow", "--from", scriptPath]);
+
+		const output = await run(cwd, env, ["flow", "run", "big-flow", "--concurrency", "2"]);
+		const summaryPath = lineValue(output, "Summary: ");
+		const runPath = dirname(summaryPath);
+		const summary = await readFile(summaryPath, "utf-8");
+		const events = (await readFile(join(runPath, "events.jsonl"), "utf-8"))
+			.split("\n")
+			.filter((line) => line.length > 0)
+			.map((line) => JSON.parse(line) as Record<string, unknown>);
+		const agentFiles = await readdir(join(runPath, "agents"));
+
+		expect(summary).toContain("## Flow Metadata");
+		expect(summary).toContain("- Name: big-flow");
+		expect(summary).toContain("- Evaluate: two schema agents");
+		expect(summary).toContain('"original": "alpha"');
+		expect(summary).toContain("json:");
+		expect(events.some((event) => event.type === "agent_start" && event.phase === "Evaluate" && event.label === "eval:alpha")).toBe(true);
+		expect(agentFiles.filter((file) => file.endsWith(".json")).length).toBe(2);
+		expect(await readFile(join(runPath, "agents", agentFiles.find((file) => file.endsWith(".json"))!), "utf-8")).toContain('"summary": "ok"');
+	});
+
 	test("flow watch tails a finished run's events and exits", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-flow-watch-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));

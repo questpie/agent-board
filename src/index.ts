@@ -799,6 +799,26 @@ function cliScopeOverrides(): { project?: string; goal?: string } {
 	return result;
 }
 
+function installScopeOverrideOptions(command: Command): void {
+	for (const child of command.commands) installScopeOverrideOptionsForCommand(child);
+}
+
+function installScopeOverrideOptionsForCommand(command: Command): void {
+	addOptionIfMissing(command, "--project <slug>", "Project slug override");
+	addOptionIfMissing(command, "--goal <slug>", "Goal slug override");
+	for (const child of command.commands) installScopeOverrideOptionsForCommand(child);
+}
+
+function addOptionIfMissing(
+	command: Command,
+	flags: string,
+	description: string,
+): void {
+	const long = flags.match(/--[a-z-]+/)?.[0];
+	if (!long || command.options.some((option) => option.long === long)) return;
+	command.option(flags, description);
+}
+
 function readOptions<T extends Record<string, unknown>>(value: T | { opts(): T }): T {
 	return typeof (value as { opts?: unknown }).opts === "function"
 		? (value as { opts(): T }).opts()
@@ -881,4 +901,5 @@ async function main(fn: () => Promise<void>): Promise<void> {
 	}
 }
 
+installScopeOverrideOptions(program);
 program.parse();

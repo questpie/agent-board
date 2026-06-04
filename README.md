@@ -97,6 +97,11 @@ agent-board flow show <run-id>
 
 Templates: `default`, `feature`, `review`, `fix`.
 
+For larger jobs, flow scripts can export `meta`, run staged `pipeline(...)`
+work, label agents by `phase`, and request validated structured JSON with
+`agent(prompt, { schema })`. This supports evaluate/verify/synthesize/report
+style audits while still writing durable board evidence.
+
 Flow runs write:
 
 ```txt
@@ -107,6 +112,9 @@ diagnostics.jsonl # filtered runtime issues only
 ```
 
 Raw Codex/ACP stderr is quiet by default; use `--verbose` only when debugging the runtime.
+For macOS Keychain stability with Codex flows, agent-board runs the bundled
+native `codex-acp` binary directly when it is available. Set
+`AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin a different ACP executable.
 
 ## Concepts
 

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { appendEvidence, getTask, updateTask } from "./tasks.js";
@@ -16,12 +17,69 @@ export type FlowAgentMode = "read" | "write";
 
 export const DEFAULT_FLOW_AGENT_MODE: FlowAgentMode = "read";
 
+const require = createRequire(import.meta.url);
+
+export type FlowJsonSchema = {
+	type?: "object" | "array" | "string" | "integer" | "number" | "boolean" | "null";
+	enum?: readonly unknown[];
+	properties?: { readonly [key: string]: FlowJsonSchema };
+	required?: readonly string[];
+	items?: FlowJsonSchema;
+	additionalProperties?: boolean | FlowJsonSchema;
+};
+
+interface FlowMeta {
+	name?: string;
+	description?: string;
+	phases?: Array<{ title: string; detail?: string }>;
+}
+
 // Maps the agent-facing flow mode onto a spawn-agent PermissionPolicy value.
 // "read" -> "auto-reject" rejects every permission request, which also blocks
 // shell execution, so read mode means native file reads only (no shell, no edits).
 // "write" -> "auto-allow" grants the agent full write/execute permission.
 export function modeToPermission(mode: FlowAgentMode): "auto-reject" | "auto-allow" {
 	return mode === "write" ? "auto-allow" : "auto-reject";
+}
+
+export interface CodexAcpBinResolution {
+	path: string;
+	source: "env" | "bundled";
+}
+
+export function resolveCodexAcpBin(): CodexAcpBinResolution | undefined {
+	const raw = process.env.AGENT_BOARD_CODEX_ACP_BIN?.trim();
+	if (raw) {
+		const path = resolve(raw);
+		if (!existsSync(path)) {
+			throw new Error(`AGENT_BOARD_CODEX_ACP_BIN points to a missing file: ${path}`);
+		}
+		return { path, source: "env" };
+	}
+	const bundled = resolveBundledCodexAcpBin();
+	return bundled ? { path: bundled, source: "bundled" } : undefined;
+}
+
+function resolveBundledCodexAcpBin(): string | undefined {
+	const pkg = codexAcpPlatformPackage();
+	if (!pkg) return undefined;
+	const binaryName = process.platform === "win32" ? "codex-acp.exe" : "codex-acp";
+	try {
+		const path = require.resolve(`${pkg}/bin/${binaryName}`);
+		return existsSync(path) ? path : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function codexAcpPlatformPackage(): string | undefined {
+	if (process.platform === "darwin" && process.arch === "arm64") return "@zed-industries/codex-acp-darwin-arm64";
+	if (process.platform === "darwin" && process.arch === "x64") return "@zed-industries/codex-acp-darwin-x64";
+	if (process.platform === "linux" && process.arch === "arm64") return "@zed-industries/codex-acp-linux-arm64";
+	if (process.platform === "linux" && process.arch === "x64") return "@zed-industries/codex-acp-linux-x64";
+	if (process.platform === "win32" && process.arch === "arm64") return "@zed-industries/codex-acp-win32-arm64";
+	if (process.platform === "win32" && process.arch === "x64") return "@zed-industries/codex-acp-win32-x64";
+	return undefined;
 }
 
 export interface FlowRunOptions {
@@ -60,21 +118,28 @@ export interface FlowFile {
 
 interface FlowAgentOptions {
 	name?: string;
+	label?: string;
+	phase?: string;
 	system?: string;
 	cwd?: string;
 	timeoutMs?: number;
 	mode?: FlowAgentMode;
+	schema?: FlowJsonSchema;
 }
 
 interface FlowAgentResult {
 	name: string;
+	label?: string;
+	phase?: string;
 	prompt: string;
 	text: string;
+	json?: unknown;
 	mode: FlowAgentMode;
 	started: string;
 	finished: string;
 	durationMs: number;
 	outputPath: string;
+	jsonPath?: string;
 	diagnostics: number;
 }
 
@@ -126,6 +191,10 @@ interface FlowContext {
 		items: T[] | Array<() => Promise<R>>,
 		worker?: (item: T, index: number) => Promise<R>,
 	): Promise<R[]>;
+	pipeline<T>(
+		items: T[],
+		...stages: Array<(value: unknown, original: T, index: number) => Promise<unknown> | unknown>
+	): Promise<unknown[]>;
 	log(message: string): Promise<void>;
 }
 
@@ -207,10 +276,15 @@ export async function runFlow(
 	if (scriptPath) await context.log(`script: ${scriptPath}`);
 
 	let summary: unknown;
+	let meta: FlowMeta | undefined;
 	try {
-		summary = scriptPath
-			? await runScriptFlow(scriptPath, context)
-			: await runAdhocFlow(context);
+		if (scriptPath) {
+			const scripted = await runScriptFlow(scriptPath, context);
+			summary = scripted.summary;
+			meta = scripted.meta;
+		} else {
+			summary = await runAdhocFlow(context);
+		}
 	} catch (error) {
 		await atomicWrite(
 			summaryPath,
@@ -220,6 +294,7 @@ export async function runFlow(
 				options,
 				target,
 				scriptPath,
+				meta,
 				error,
 				agents: state.agents,
 			}),
@@ -241,6 +316,7 @@ export async function runFlow(
 			options,
 			target,
 			scriptPath,
+			meta,
 			summary: normalizeResult(summary),
 			agents: state.agents,
 		}),
@@ -293,6 +369,8 @@ type FlowEvent = {
 	ts?: string;
 	type: string;
 	name?: string;
+	label?: string;
+	phase?: string;
 	mode?: string;
 	message?: string;
 	chars?: number;
@@ -384,17 +462,18 @@ function parseFlowEvent(line: string): FlowEvent | undefined {
 // Compact one-line render of a single event for the live watch view.
 function formatFlowEvent(event: FlowEvent, baselineMs: number): string | undefined {
 	const at = event.ts ? `${formatElapsed(Date.parse(event.ts) - baselineMs)} ` : "";
+	const agentName = displayAgent(event.name ?? "agent", event.label, event.phase);
 	if (event.type === "log") return `${at}log: ${event.message ?? ""}`;
-	if (event.type === "agent_start") return `${at}${event.name}: start (${event.mode})`;
+	if (event.type === "agent_start") return `${at}${agentName}: start (${event.mode})`;
 	if (event.type === "agent_delta") {
 		const preview = event.preview ? `  ${event.preview}` : "";
-		return `${at}${event.name}: ${event.chars ?? 0} chars${preview}`;
+		return `${at}${agentName}: ${event.chars ?? 0} chars${preview}`;
 	}
-	if (event.type === "agent_heartbeat") return `${at}${event.name}: working (${event.chars ?? 0} chars)`;
+	if (event.type === "agent_heartbeat") return `${at}${agentName}: working (${event.chars ?? 0} chars)`;
 	if (event.type === "agent_finish") {
-		return `${at}${event.name}: done in ${event.durationMs ?? 0}ms (${event.chars ?? 0} chars)`;
+		return `${at}${agentName}: done in ${event.durationMs ?? 0}ms (${event.chars ?? 0} chars)`;
 	}
-	if (event.type === "agent_error") return `${at}${event.name}: error ${event.error ?? ""}`;
+	if (event.type === "agent_error") return `${at}${agentName}: error ${event.error ?? ""}`;
 	return undefined;
 }
 
@@ -445,16 +524,26 @@ function createFlowContext(
 		},
 		agent: async (prompt, agentOptions = {}) => {
 			const callIndex = ++agentIndex;
-			const name = agentOptions.name ?? `agent-${callIndex}`;
+			const name = agentOptions.name ?? agentOptions.label ?? `agent-${callIndex}`;
+			const label = agentOptions.label;
+			const phase = agentOptions.phase;
 			const mode = agentOptions.mode ?? DEFAULT_FLOW_AGENT_MODE;
+			const effectivePrompt = agentOptions.schema
+				? withStructuredOutputInstruction(prompt, agentOptions.schema)
+				: prompt;
+			const agentDir = join(runPath, "agents");
+			const baseName = `${String(callIndex).padStart(2, "0")}-${slugify(name)}`;
+			const outputPath = join(agentDir, `${baseName}.md`);
+			const jsonPath = agentOptions.schema ? join(agentDir, `${baseName}.json`) : undefined;
 			const started = nowIso();
-			await writeEvent(runPath, "agent_start", { name, mode, promptChars: prompt.length });
-			console.log(`agent ${name}: start (${mode})`);
+			await writeEvent(runPath, "agent_start", { name, label, phase, mode, promptChars: effectivePrompt.length });
+			console.log(`agent ${displayAgent(name, label, phase)}: start (${mode})`);
 			const startedMs = Date.now();
 			const diagnostics: FlowDiagnostic[] = [];
-			let text: string;
+			let text = "";
+			let json: unknown;
 			try {
-				text = await runAgentPrompt(options.runtime, prompt, {
+				text = await runAgentPrompt(options.runtime, effectivePrompt, {
 					...agentOptions,
 					mode,
 					cwd: agentOptions.cwd ?? workspace.repoPath,
@@ -464,49 +553,69 @@ function createFlowContext(
 						if (event.type === "agent_delta") {
 							await writeEvent(runPath, "agent_delta", {
 								name,
+								label,
+								phase,
 								chars: event.chars,
 								preview: event.preview,
 							});
 						} else {
-							await writeEvent(runPath, "agent_heartbeat", { name, chars: event.chars });
+							await writeEvent(runPath, "agent_heartbeat", { name, label, phase, chars: event.chars });
 						}
 					},
 				});
+				if (agentOptions.schema) {
+					json = parseStructuredOutput(text, agentOptions.schema);
+				}
 			} catch (error) {
+				if (text) {
+					await ensureDir(agentDir);
+					await atomicWrite(outputPath, formatAgentOutput(name, effectivePrompt, text));
+				}
 				await writeDiagnostics(runPath, name, diagnostics);
 				await writeEvent(runPath, "agent_error", {
 					name,
+					label,
+					phase,
 					durationMs: Date.now() - startedMs,
 					diagnostics: diagnostics.length,
 					error: truncateForLog(error instanceof Error ? error.message : String(error), 300),
 				});
 				throw error;
 			}
-			const outputPath = join(runPath, "agents", `${String(callIndex).padStart(2, "0")}-${slugify(name)}.md`);
-			await ensureDir(join(runPath, "agents"));
-			await atomicWrite(outputPath, formatAgentOutput(name, prompt, text));
+			await ensureDir(agentDir);
+			if (jsonPath !== undefined) {
+				await atomicWrite(jsonPath, `${JSON.stringify(json, null, 2)}\n`);
+			}
+			await atomicWrite(outputPath, formatAgentOutput(name, effectivePrompt, text, jsonPath));
 			await writeDiagnostics(runPath, name, diagnostics);
 			const result: FlowAgentResult = {
 				name,
-				prompt,
+				label,
+				phase,
+				prompt: effectivePrompt,
 				text,
+				json,
 				mode,
 				started,
 				finished: nowIso(),
 				durationMs: Date.now() - startedMs,
 				outputPath,
+				jsonPath,
 				diagnostics: diagnostics.length,
 			};
 			state.agents.push(result);
 			await writeEvent(runPath, "agent_finish", {
 				name,
+				label,
+				phase,
 				mode,
 				durationMs: result.durationMs,
 				outputPath,
+				jsonPath,
 				chars: text.length,
 				diagnostics: diagnostics.length,
 			});
-			console.log(`agent ${name}: done`);
+			console.log(`agent ${displayAgent(name, label, phase)}: done`);
 			return result;
 		},
 		parallel: async <T, R>(
@@ -517,6 +626,20 @@ function createFlowContext(
 				? (items as T[]).map((item, index) => () => worker(item, index))
 				: (items as Array<() => Promise<R>>);
 			return runLimited(tasks, options.concurrency);
+		},
+		pipeline: async <T>(
+			items: T[],
+			...stages: Array<(value: unknown, original: T, index: number) => Promise<unknown> | unknown>
+		): Promise<unknown[]> => {
+			let rows = items.map((original) => ({ original, value: original as unknown }));
+			for (const stage of stages) {
+				const values = await runLimited(
+					rows.map((row, index) => async () => stage(row.value, row.original, index)),
+					options.concurrency,
+				);
+				rows = rows.map((row, index) => ({ ...row, value: values[index] }));
+			}
+			return rows.map((row) => row.value);
 		},
 		log: async (message) => {
 			await writeEvent(runPath, "log", { message });
@@ -545,14 +668,215 @@ async function createRunDir(
 	throw new Error(`Could not create unique flow run directory for ${baseId}`);
 }
 
-async function runScriptFlow(scriptPath: string, context: FlowContext): Promise<unknown> {
+async function runScriptFlow(
+	scriptPath: string,
+	context: FlowContext,
+): Promise<{ summary: unknown; meta?: FlowMeta }> {
 	const moduleUrl = `${pathToFileURL(scriptPath).href}?run=${Date.now()}`;
-	const module = await import(moduleUrl) as { default?: unknown; flow?: unknown };
+	const module = await import(moduleUrl) as { default?: unknown; flow?: unknown; meta?: unknown };
 	const flow = module.default ?? module.flow;
 	if (typeof flow !== "function") {
 		throw new Error(`Flow script must export a default function: ${scriptPath}`);
 	}
-	return flow(context);
+	const meta = normalizeFlowMeta(module.meta);
+	if (meta?.name) await context.log(`flow meta: ${meta.name}`);
+	if (meta?.phases?.length) {
+		await context.log(`flow phases: ${meta.phases.map((phase) => phase.title).join(" -> ")}`);
+	}
+	return { summary: await flow(context), meta };
+}
+
+function normalizeFlowMeta(value: unknown): FlowMeta | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const meta: FlowMeta = {};
+	if (typeof raw.name === "string" && raw.name.trim()) meta.name = raw.name.trim();
+	if (typeof raw.description === "string" && raw.description.trim()) {
+		meta.description = raw.description.trim();
+	}
+	if (Array.isArray(raw.phases)) {
+		const phases = raw.phases
+			.map((phase) => {
+				if (!phase || typeof phase !== "object" || Array.isArray(phase)) return undefined;
+				const p = phase as Record<string, unknown>;
+				if (typeof p.title !== "string" || !p.title.trim()) return undefined;
+				const normalized: { title: string; detail?: string } = { title: p.title.trim() };
+				if (typeof p.detail === "string" && p.detail.trim()) normalized.detail = p.detail.trim();
+				return normalized;
+			})
+			.filter((phase): phase is { title: string; detail?: string } => phase !== undefined);
+		if (phases.length) meta.phases = phases;
+	}
+	return meta.name || meta.description || meta.phases?.length ? meta : undefined;
+}
+
+function displayAgent(name: string, label?: string, phase?: string): string {
+	const visible = label || name;
+	return phase ? `[${phase}] ${visible}` : visible;
+}
+
+function withStructuredOutputInstruction(prompt: string, schema: FlowJsonSchema): string {
+	return [
+		prompt,
+		"",
+		"STRUCTURED OUTPUT:",
+		"Return ONLY valid JSON matching this JSON schema. Do not wrap it in Markdown. Do not include commentary.",
+		JSON.stringify(schema, null, 2),
+	].join("\n");
+}
+
+export function parseStructuredOutput(text: string, schema: FlowJsonSchema): unknown {
+	const value = extractJsonValue(text);
+	const errors = validateJsonValue(value, schema, "$");
+	if (errors.length) {
+		throw new Error(`Structured output failed schema validation: ${errors.slice(0, 8).join("; ")}`);
+	}
+	return value;
+}
+
+function extractJsonValue(text: string): unknown {
+	const trimmed = text.trim();
+	if (!trimmed) throw new Error("Structured output was empty.");
+	const direct = tryParseJson(trimmed);
+	if (direct.ok) return direct.value;
+
+	const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+	if (fenced?.[1]) {
+		const parsed = tryParseJson(fenced[1].trim());
+		if (parsed.ok) return parsed.value;
+	}
+
+	const candidate = findFirstJsonCandidate(text);
+	if (candidate !== undefined) {
+		const parsed = tryParseJson(candidate);
+		if (parsed.ok) return parsed.value;
+	}
+
+	throw new Error("Structured output did not contain parseable JSON.");
+}
+
+function tryParseJson(value: string): { ok: true; value: unknown } | { ok: false } {
+	try {
+		return { ok: true, value: JSON.parse(value) as unknown };
+	} catch {
+		return { ok: false };
+	}
+}
+
+function findFirstJsonCandidate(text: string): string | undefined {
+	const starts: number[] = [];
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index];
+		if (char === "{" || char === "[") starts.push(index);
+	}
+	for (const start of starts) {
+		const candidate = balancedJsonSlice(text, start);
+		if (candidate !== undefined) return candidate;
+	}
+	return undefined;
+}
+
+function balancedJsonSlice(text: string, start: number): string | undefined {
+	const opener = text[start];
+	const closer = opener === "{" ? "}" : "]";
+	const stack: string[] = [];
+	let inString = false;
+	let escaped = false;
+	for (let index = start; index < text.length; index++) {
+		const char = text[index]!;
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (char === "\\") {
+				escaped = true;
+			} else if (char === "\"") {
+				inString = false;
+			}
+			continue;
+		}
+		if (char === "\"") {
+			inString = true;
+			continue;
+		}
+		if (char === "{" || char === "[") {
+			stack.push(char === "{" ? "}" : "]");
+			continue;
+		}
+		if (char === "}" || char === "]") {
+			if (stack.pop() !== char) return undefined;
+			if (stack.length === 0) {
+				const candidate = text.slice(start, index + 1);
+				return candidate.endsWith(closer) ? candidate : undefined;
+			}
+		}
+	}
+	return undefined;
+}
+
+function validateJsonValue(value: unknown, schema: FlowJsonSchema, path: string): string[] {
+	const errors: string[] = [];
+	if (schema.enum && !schema.enum.some((item) => jsonEqual(item, value))) {
+		errors.push(`${path} must be one of ${schema.enum.map((item) => JSON.stringify(item)).join(", ")}`);
+	}
+
+	if (schema.type === "null") {
+		if (value !== null) errors.push(`${path} must be null`);
+		return errors;
+	}
+	if (schema.type === "string") {
+		if (typeof value !== "string") errors.push(`${path} must be a string`);
+		return errors;
+	}
+	if (schema.type === "boolean") {
+		if (typeof value !== "boolean") errors.push(`${path} must be a boolean`);
+		return errors;
+	}
+	if (schema.type === "number") {
+		if (typeof value !== "number" || !Number.isFinite(value)) errors.push(`${path} must be a number`);
+		return errors;
+	}
+	if (schema.type === "integer") {
+		if (typeof value !== "number" || !Number.isInteger(value)) errors.push(`${path} must be an integer`);
+		return errors;
+	}
+	if (schema.type === "array") {
+		if (!Array.isArray(value)) return [`${path} must be an array`];
+		if (schema.items) {
+			value.forEach((item, index) => {
+				errors.push(...validateJsonValue(item, schema.items!, `${path}[${index}]`));
+			});
+		}
+		return errors;
+	}
+	if (schema.type === "object" || schema.properties || schema.required) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) {
+			return [`${path} must be an object`];
+		}
+		const object = value as Record<string, unknown>;
+		for (const key of schema.required ?? []) {
+			if (!(key in object)) errors.push(`${path}.${key} is required`);
+		}
+		const properties = schema.properties ?? {};
+		for (const [key, propertySchema] of Object.entries(properties)) {
+			if (key in object) errors.push(...validateJsonValue(object[key], propertySchema, `${path}.${key}`));
+		}
+		if (schema.additionalProperties === false) {
+			for (const key of Object.keys(object)) {
+				if (!(key in properties)) errors.push(`${path}.${key} is not allowed`);
+			}
+		} else if (schema.additionalProperties && typeof schema.additionalProperties === "object") {
+			for (const [key, child] of Object.entries(object)) {
+				if (!(key in properties)) {
+					errors.push(...validateJsonValue(child, schema.additionalProperties, `${path}.${key}`));
+				}
+			}
+		}
+	}
+	return errors;
+}
+
+function jsonEqual(a: unknown, b: unknown): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
 }
 
 async function runAdhocFlow(context: FlowContext): Promise<string> {
@@ -643,24 +967,34 @@ async function runAgentPrompt(
 		return fullText;
 	}
 
-	const [{ streamText }, { spawnAgent }] = await Promise.all([
+	const [{ streamText }, { spawnAgent, adapters }] = await Promise.all([
 		import("ai"),
 		import("spawn-agent"),
 	]);
+	const agentSettings = {
+		cwd: options.cwd,
+		permission: modeToPermission(options.mode ?? DEFAULT_FLOW_AGENT_MODE),
+		inactivityTimeoutMs: options.timeoutMs ?? 180_000,
+		onStderr: (line: string) => {
+			const diagnostic = summarizeDiagnostic(line);
+			if (diagnostic) options.diagnostics.push(diagnostic);
+			// Stderr is runtime telemetry, not output: it never enters events.jsonl
+			// as text, but it does mark the agent as alive for heartbeats.
+			activitySinceEmit = true;
+			if (options.verbose) console.error(`[${options.name ?? runtime}] ${line}`);
+		},
+	};
+	const codexAcpBin = runtime === "codex" ? resolveCodexAcpBin() : undefined;
+	if (codexAcpBin) {
+		options.diagnostics.push({
+			level: "info",
+			message: `codex acp bin (${codexAcpBin.source}): ${codexAcpBin.path}`,
+		});
+	}
 	const result = streamText({
-		model: spawnAgent(runtime, {
-			cwd: options.cwd,
-			permission: modeToPermission(options.mode ?? DEFAULT_FLOW_AGENT_MODE),
-			inactivityTimeoutMs: options.timeoutMs ?? 180_000,
-			onStderr: (line: string) => {
-				const diagnostic = summarizeDiagnostic(line);
-				if (diagnostic) options.diagnostics.push(diagnostic);
-				// Stderr is runtime telemetry, not output: it never enters events.jsonl
-				// as text, but it does mark the agent as alive for heartbeats.
-				activitySinceEmit = true;
-				if (options.verbose) console.error(`[${options.name ?? runtime}] ${line}`);
-			},
-		}),
+		model: codexAcpBin
+			? spawnAgent.fromAdapter(adapters.codex({ binPath: codexAcpBin.path }), agentSettings)
+			: spawnAgent(runtime, agentSettings),
 		system: options.system ?? defaultSystemPrompt(),
 		prompt,
 	});
@@ -708,7 +1042,8 @@ async function* mockAgentStream(
 	name: string | undefined,
 	prompt: string,
 ): AsyncGenerator<FlowStreamPart> {
-	const text = `Mock ${runtime} response from ${name ?? "agent"}.\n\n${prompt.slice(0, 600)}`;
+	const text = process.env.AGENT_BOARD_FLOW_MOCK_JSON
+		?? `Mock ${runtime} response from ${name ?? "agent"}.\n\n${prompt.slice(0, 600)}`;
 	const chunkSize = 16;
 	for (let index = 0; index < text.length; index += chunkSize) {
 		yield { type: "text", text: text.slice(index, index + chunkSize) };
@@ -843,15 +1178,20 @@ function formatSummary(input: {
 	options: FlowRunOptions;
 	target: string;
 	scriptPath?: string;
+	meta?: FlowMeta;
 	summary: string;
 	agents: FlowAgentResult[];
 }): string {
 	const agents = input.agents
 		.map((agent) => {
 			const diagnostics = agent.diagnostics ? `, diagnostics: ${agent.diagnostics}` : "";
-			return `- ${agent.name}: ${agent.mode}, ${agent.durationMs}ms, output: ${agent.outputPath}${diagnostics}`;
+			const phase = agent.phase ? `, phase: ${agent.phase}` : "";
+			const label = agent.label && agent.label !== agent.name ? `, label: ${agent.label}` : "";
+			const json = agent.jsonPath ? `, json: ${agent.jsonPath}` : "";
+			return `- ${agent.name}: ${agent.mode}${phase}${label}, ${agent.durationMs}ms, output: ${agent.outputPath}${json}${diagnostics}`;
 		})
 		.join("\n") || "- none";
+	const metaBlock = formatFlowMeta(input.meta);
 	return [
 		`# Flow Run ${input.runId}`,
 		"",
@@ -862,6 +1202,8 @@ function formatSummary(input: {
 		input.scriptPath ? `- Script: ${input.scriptPath}` : undefined,
 		`- Created: ${nowIso()}`,
 		"",
+		metaBlock,
+		metaBlock ? "" : undefined,
 		"## Summary",
 		"",
 		input.summary || "No summary returned.",
@@ -879,12 +1221,27 @@ function formatSummary(input: {
 	].filter((line) => line !== undefined).join("\n");
 }
 
+function formatFlowMeta(meta?: FlowMeta): string | undefined {
+	if (!meta) return undefined;
+	const lines = ["## Flow Metadata", ""];
+	if (meta.name) lines.push(`- Name: ${meta.name}`);
+	if (meta.description) lines.push(`- Description: ${meta.description}`);
+	if (meta.phases?.length) {
+		lines.push("", "### Phases", "");
+		for (const phase of meta.phases) {
+			lines.push(`- ${phase.title}${phase.detail ? `: ${phase.detail}` : ""}`);
+		}
+	}
+	return lines.join("\n");
+}
+
 function formatFailedSummary(input: {
 	runId: string;
 	workspace: Workspace;
 	options: FlowRunOptions;
 	target: string;
 	scriptPath?: string;
+	meta?: FlowMeta;
 	error: unknown;
 	agents: FlowAgentResult[];
 }): string {
@@ -894,7 +1251,7 @@ function formatFailedSummary(input: {
 	});
 }
 
-function formatAgentOutput(name: string, prompt: string, text: string): string {
+function formatAgentOutput(name: string, prompt: string, text: string, jsonPath?: string): string {
 	return [
 		`# ${name}`,
 		"",
@@ -902,11 +1259,15 @@ function formatAgentOutput(name: string, prompt: string, text: string): string {
 		"",
 		prompt,
 		"",
+		jsonPath ? "## Structured Output" : undefined,
+		jsonPath ? "" : undefined,
+		jsonPath ? `JSON: ${jsonPath}` : undefined,
+		jsonPath ? "" : undefined,
 		"## Output",
 		"",
 		text.trim() || "No output.",
 		"",
-	].join("\n");
+	].filter((line) => line !== undefined).join("\n");
 }
 
 function summarizeDiagnostic(line: string): FlowDiagnostic | undefined {

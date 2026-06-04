@@ -96,6 +96,10 @@ Diagnostics: <run>/diagnostics.jsonl
 
 Read `summary.md` first.
 
+For Codex runtime on macOS, agent-board runs the bundled native `codex-acp`
+binary directly when it is available. Set `AGENT_BOARD_CODEX_ACP_BIN` only when
+you need to pin a different ACP executable.
+
 ## Skills
 
 ```sh

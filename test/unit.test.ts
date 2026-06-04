@@ -8,7 +8,7 @@ import { gitState } from "../src/git.js";
 import { atomicWrite } from "../src/utils.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
-import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, runLimited } from "../src/flow.js";
+import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseStructuredOutput, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 
 describe("markdown frontmatter", () => {
@@ -163,6 +163,63 @@ describe("flow agent mode", () => {
 		expect(modeToPermission("read")).toBe("auto-reject");
 		expect(modeToPermission("write")).toBe("auto-allow");
 		expect(modeToPermission(DEFAULT_FLOW_AGENT_MODE)).toBe("auto-reject");
+	});
+});
+
+describe("flow Codex ACP override", () => {
+	test("resolves AGENT_BOARD_CODEX_ACP_BIN when set", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agent-board-codex-acp-"));
+		const bin = join(dir, "codex-acp");
+		await writeFile(bin, "");
+		const previous = process.env.AGENT_BOARD_CODEX_ACP_BIN;
+		try {
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = bin;
+			expect(resolveCodexAcpBin()).toEqual({ path: bin, source: "env" });
+
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = " ";
+			expect(resolveCodexAcpBin()?.source).not.toBe("env");
+		} finally {
+			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
+			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
+		}
+	});
+
+	test("rejects a missing AGENT_BOARD_CODEX_ACP_BIN path", () => {
+		const previous = process.env.AGENT_BOARD_CODEX_ACP_BIN;
+		try {
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = join(tmpdir(), "missing-codex-acp");
+			expect(() => resolveCodexAcpBin()).toThrow("AGENT_BOARD_CODEX_ACP_BIN");
+		} finally {
+			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
+			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
+		}
+	});
+});
+
+describe("flow structured output", () => {
+	const schema = {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			title: { type: "string" },
+			severity: { type: "string", enum: ["high", "low"] },
+			count: { type: "integer" },
+		},
+		required: ["title", "severity", "count"],
+	} as const;
+
+	test("parses and validates fenced JSON", () => {
+		expect(parseStructuredOutput('```json\n{"title":"A","severity":"high","count":2}\n```', schema)).toEqual({
+			title: "A",
+			severity: "high",
+			count: 2,
+		});
+	});
+
+	test("rejects schema drift", () => {
+		expect(() =>
+			parseStructuredOutput('{"title":"A","severity":"medium","count":2,"extra":true}', schema),
+		).toThrow("Structured output failed schema validation");
 	});
 });
 
