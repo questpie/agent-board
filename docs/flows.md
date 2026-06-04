@@ -1,0 +1,193 @@
+# Flows
+
+`agent-board flow` is a minimal local orchestration layer for controller agents.
+
+The CLI is not meant to be a human workflow builder. Humans can speak naturally; the controller agent uses `flow new`, edits the script, summarizes the phases, and runs it after approval or explicit go-ahead.
+
+## Commands
+
+```sh
+agent-board flow new <name> --template feature
+agent-board flow cat <name>
+agent-board flow write <name> --from ./flow.mjs
+agent-board flow run <name> --input "<scope>" --task <task-id>
+agent-board flow show <run-id>
+agent-board flow watch <run-id>
+```
+
+`flow watch <run-id>` tails the run's `events.jsonl` and renders compact per-agent progress (start, throttled char counts and preview, heartbeats, finish, errors). It is read-only — it never spawns agents or mutates run state — and exits when the run produces `summary.md` or on Ctrl-C.
+
+Templates:
+
+- `default`: general read-only fan-out
+- `feature`: feature planning, test planning, and synthesis
+- `review`: cross-agent review
+- `fix`: reproduction, localization, regression-test planning
+
+For quick read-only fan-out:
+
+```sh
+agent-board flow run "Audit auth for missing tests" --agents 3 --concurrency 3
+```
+
+## Script API
+
+Workflow scripts export a default async function:
+
+```js
+export default async function flow({ input, agent, parallel, log, workspace }) {
+	await log(`running audit: ${input}`);
+
+	const results = await parallel([
+		() => agent(`Inspect architecture for: ${input}`, { name: "researcher" }),
+		() => agent(`Find risks for: ${input}`, { name: "critic" }),
+	]);
+
+	return results.map((result) => `## ${result.name}\n\n${result.text}`).join("\n\n");
+}
+```
+
+Available context:
+
+- `input`: `--input` text, or the ad-hoc target for unscripted runs
+- `agent(prompt, options)`: spawn a local coding agent
+- `parallel(items, worker)`: run tasks with the CLI concurrency limit
+- `pipeline(items, ...stages)`: run ordered stages across many items with the CLI concurrency limit
+- `log(message)`: write compact lifecycle logs
+- `workspace`: project, goal, and repo metadata
+
+Flow scripts may also export metadata:
+
+```js
+export const meta = {
+	name: "docs-audit",
+	description: "Evaluate, verify, synthesize, and report on docs quality.",
+	phases: [
+		{ title: "Evaluate", detail: "fan out by docs group" },
+		{ title: "Verify", detail: "adversarial source-code checks" },
+		{ title: "Report", detail: "deduplicated final markdown" },
+	],
+};
+```
+
+Metadata is recorded in `summary.md` and compact lifecycle logs.
+
+### Big-Job Primitives
+
+Use `pipeline` when a large workflow needs ordered stages per item:
+
+```js
+export default async function flow({ agent, pipeline }) {
+	const groups = ["backend", "frontend", "production"];
+
+	return pipeline(
+		groups,
+		(group) => agent(`Audit ${group}`, { phase: "Evaluate", label: `eval:${group}` }),
+		(evalResult, group) => agent(`Verify ${group}\n\n${evalResult.text}`, { phase: "Verify", label: `verify:${group}` }),
+	);
+}
+```
+
+Each stage runs across all items with the run's `--concurrency` limit before the next stage begins. The stage callback receives `(value, originalItem, index)`, so later stages can use both the previous stage result and the original item.
+
+Use `agent(..., { schema })` when downstream stages need reliable JSON:
+
+```js
+const FINDING_SCHEMA = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		summary: { type: "string" },
+		severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
+	},
+	required: ["summary", "severity"],
+};
+
+const result = await agent("Return one finding.", {
+	phase: "Evaluate",
+	label: "eval:auth",
+	schema: FINDING_SCHEMA,
+});
+
+console.log(result.json.severity);
+```
+
+Structured outputs are validated before the agent finishes. The parsed JSON is available as `result.json`, and the run writes a sibling `.json` artifact next to that agent's markdown output. Supported schema keywords are `type`, `properties`, `required`, `items`, `enum`, and `additionalProperties`.
+
+### Agent permissions (`mode`)
+
+`agent(prompt, { mode })` controls what the spawned agent is allowed to do. This is enforced via the runtime permission policy, not just the prompt:
+
+- `mode: "read"` (default): maps to `auto-reject`, which rejects every permission request. Native file reads still work, but **there is no shell access and no edits** — a researcher can read files but any `rg`/`grep`/`find`/`cat` run through the shell is rejected and degrades. This makes read mode genuinely safe for cross-agent reviews.
+- `mode: "write"`: maps to `auto-allow`, granting full write/execute access. Write-heavy flows must opt in explicitly with `{ mode: "write" }`.
+
+The generated templates and ad-hoc fan-out run every role in `read` mode. Each agent's resolved mode is recorded in `summary.md` (e.g. `- reviewer: read, 1234ms, ...`).
+
+A future "allow reads, run read-only shell, reject writes" policy would use the `PermissionPolicy` callback form to inspect each request and allow read-class tools while rejecting write/execute. That is not implemented yet.
+
+## Artifacts
+
+Each run writes:
+
+```txt
+~/.agent-board/projects/<project>/goals/<goal>/flows/runs/<run-id>/
+  summary.md
+  events.jsonl
+  diagnostics.jsonl
+  agents/
+    01-researcher.md
+    02-critic.md
+```
+
+Read order:
+
+1. `summary.md`
+2. `agents/*.md` only when details are needed
+3. `diagnostics.jsonl` only for runtime or MCP issues
+
+Raw agent stderr is quiet by default. Use `--verbose` only when debugging the runtime.
+For Codex runtime on macOS, agent-board runs the bundled native `codex-acp`
+binary directly when it is available. Set `AGENT_BOARD_CODEX_ACP_BIN` only when
+you need to pin a different ACP executable for Keychain stability.
+
+### `events.jsonl` schema
+
+`events.jsonl` is the append-only lifecycle/progress stream. Every line is a JSON object with `ts` (ISO timestamp) and `type`, plus type-specific fields. It is intentionally compact: it never carries full agent output (that stays in `agents/*.md`) and never carries raw runtime stderr (that is filtered into `diagnostics.jsonl`). The `flow watch <run-id>` command tails this file, so the schema below is stable.
+
+| `type` | Fields | Meaning |
+| --- | --- | --- |
+| `log` | `message` | Controller-level lifecycle line. |
+| `agent_start` | `name`, `mode`, `promptChars` | An agent began streaming. |
+| `agent_delta` | `name`, `chars`, `preview` | Throttled progress while text streams. `chars` is the running output length; `preview` is a SHORT trailing tail (≤ ~80 chars), never the full text. |
+| `agent_heartbeat` | `name`, `chars` | A throttle window saw runtime/tool activity (stderr or tool events) but produced no new text — the agent is alive but quiet. |
+| `agent_finish` | `name`, `mode`, `durationMs`, `outputPath`, `chars`, `diagnostics` | An agent completed; full output is at `outputPath`. |
+| `agent_error` | `name`, `durationMs`, `diagnostics`, `error` | An agent failed. |
+
+`agent_delta`/`agent_heartbeat` are emitted at most once per throttle window (default ~1s, override with `AGENT_BOARD_FLOW_THROTTLE_MS`), so a fast token stream coalesces into a few events rather than one event per token.
+
+## Controller Pattern
+
+For non-trivial work:
+
+1. Confirm project and goal with `agent-board status`.
+2. Write or update a spec.
+3. Split the feature into linked tasks.
+4. Create a flow script with `agent-board flow new <name> --template <kind>`.
+5. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
+6. Summarize the phases to the user.
+7. Run the script after approval or explicit go-ahead.
+8. Read `summary.md`, update board state, and decide the next wave.
+
+The main chat remains controller. Spawned agents do not own roadmap, branch policy, commit policy, or final done decisions.
+
+## Same-Worktree Safety
+
+Same-worktree write flows are acceptable for P0 only when the script prevents agents from fighting:
+
+- no branch switching by spawned agents
+- no commits by spawned agents
+- no reset/rebase
+- no overlapping file edits
+- no concurrent git operations
+
+For heavy parallel implementation, use separate git worktrees and pass `AGENT_BOARD_REPO`.

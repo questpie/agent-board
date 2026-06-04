@@ -3,10 +3,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
-import { createKnowledge, createSpec, getSpec, listKnowledge, listSpecs, parseScope } from "./documents.js";
+import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, writeKnowledgeBody, writeSpecBody } from "./documents.js";
+import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
-import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask } from "./tasks.js";
+import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
 import type { TaskFile, Workspace } from "./types.js";
 import { table } from "./utils.js";
@@ -198,6 +199,34 @@ program
 		});
 	});
 
+const task = program.command("task").description("Read and write task body content");
+
+task
+	.command("cat")
+	.argument("<task-id>")
+	.description("Print a task body without frontmatter")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const taskFile = await getTask(workspace, id);
+			console.log(taskFile.body.trimEnd());
+		});
+	});
+
+task
+	.command("write")
+	.argument("<task-id>")
+	.requiredOption("--from <file|->", "Read replacement body from a file or stdin")
+	.description("Replace a task body while preserving frontmatter")
+	.action(async (id, options) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const body = await readInputSource(options.from);
+			const taskFile = await writeTaskBody(workspace, id, body);
+			console.log(`Wrote task ${taskFile.meta.id}`);
+		});
+	});
+
 program
 	.command("new")
 	.argument("<title>")
@@ -273,6 +302,32 @@ spec
 		});
 	});
 
+spec
+	.command("cat")
+	.argument("<spec-id>")
+	.description("Print a spec body without frontmatter")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await getSpec(workspace, id);
+			console.log(doc.body.trimEnd());
+		});
+	});
+
+spec
+	.command("write")
+	.argument("<spec-id>")
+	.requiredOption("--from <file|->", "Read replacement body from a file or stdin")
+	.description("Replace a spec body while preserving frontmatter")
+	.action(async (id, options) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const body = await readInputSource(options.from);
+			const doc = await writeSpecBody(workspace, id, body);
+			console.log(`Wrote spec ${doc.scope}/${doc.meta.id}`);
+		});
+	});
+
 const knowledge = program
 	.command("knowledge")
 	.description("Manage knowledge notes across overlay scopes");
@@ -316,6 +371,32 @@ knowledge
 					]),
 				]),
 			);
+		});
+	});
+
+knowledge
+	.command("cat")
+	.argument("<knowledge-id>")
+	.description("Print a knowledge body without frontmatter")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await getKnowledge(workspace, id);
+			console.log(doc.body.trimEnd());
+		});
+	});
+
+knowledge
+	.command("write")
+	.argument("<knowledge-id>")
+	.requiredOption("--from <file|->", "Read replacement body from a file or stdin")
+	.description("Replace a knowledge body while preserving frontmatter")
+	.action(async (id, options) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const body = await readInputSource(options.from);
+			const doc = await writeKnowledgeBody(workspace, id, body);
+			console.log(`Wrote knowledge ${doc.scope}/${doc.meta.id}`);
 		});
 	});
 
@@ -501,6 +582,162 @@ program
 		});
 	});
 
+const flow = program.command("flow").description("Create and run local multi-agent flows");
+
+flow
+	.command("new")
+	.argument("<name>")
+	.description("Create a project flow script")
+	.option("--template <template>", "Flow template: default, feature, review, or fix", "default")
+	.option("--force", "Overwrite an existing flow")
+	.action(async (name, options) => {
+		await main(async () => {
+			const opts = readOptions<{ force?: boolean; template: string }>(options);
+			const template = parseFlowTemplate(opts.template);
+			const workspace = await currentOrInitWorkspace();
+			const created = await createFlow(workspace, name, { force: opts.force, template });
+			console.log(`Created flow ${created.name}`);
+			console.log(`Template: ${template}`);
+			console.log(`Script: ${created.path}`);
+			console.log("Next: inspect or edit the script, summarize its phases to the user, then run:");
+			console.log(`agent-board flow cat ${created.name}`);
+			console.log(`agent-board flow run ${created.name} --input "<scope>"`);
+		});
+	});
+
+flow
+	.command("list")
+	.description("List project flow scripts")
+	.action(async () => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const flows = await listFlows(workspace);
+			if (!flows.length) {
+				console.log("No flows.");
+				return;
+			}
+			console.log(
+				table([
+					["Flow", "Path"],
+					...flows.map((item) => [item.name, item.path]),
+				]),
+			);
+		});
+	});
+
+flow
+	.command("run")
+	.argument("<target>")
+	.description("Run a flow script by name/path, or run an ad-hoc Codex flow")
+	.option("--input <text>", "Input passed to a flow script")
+	.option("--task <task-id>", "Append flow evidence to a task")
+	.option("--runtime <runtime>", "Agent runtime: codex, claude, or opencode", process.env.AGENT_BOARD_FLOW_RUNTIME ?? "codex")
+	.option("--concurrency <n>", "Maximum concurrent agents", "3")
+	.option("--agents <n>", "Agent count for ad-hoc flow runs", "3")
+	.option("--verbose", "Print raw agent stderr")
+	.action(async (target, options) => {
+		await main(async () => {
+			const opts = readOptions<{
+				input?: string;
+				task?: string;
+				runtime: string;
+				concurrency: string;
+				agents: string;
+				verbose?: boolean;
+			}>(options);
+			const workspace = await currentOrInitWorkspace();
+			let result;
+			try {
+				result = await runFlow(workspace, {
+					target,
+					input: opts.input,
+					taskId: opts.task,
+					runtime: parseFlowRuntime(opts.runtime),
+					concurrency: parsePositiveInt(opts.concurrency, "--concurrency"),
+					agents: parsePositiveInt(opts.agents, "--agents"),
+					verbose: opts.verbose,
+				});
+			} catch (error) {
+				if (error instanceof FlowRunError) {
+					console.log(`Flow run ${error.runId} failed`);
+					console.log(`Summary: ${error.summaryPath}`);
+					console.log(`Agent outputs: ${join(error.runPath, "agents")}`);
+					console.log(`Diagnostics: ${join(error.runPath, "diagnostics.jsonl")}`);
+					console.log("Next: read failed Summary first; inspect diagnostics only if needed.");
+				}
+				throw error;
+			}
+			console.log(`Flow run ${result.runId}`);
+			console.log(`Summary: ${result.summaryPath}`);
+			console.log(`Agent outputs: ${join(result.runPath, "agents")}`);
+			console.log(`Diagnostics: ${join(result.runPath, "diagnostics.jsonl")}`);
+			console.log("Next: read Summary first; inspect agent outputs or diagnostics only if needed.");
+		});
+	});
+
+flow
+	.command("cat")
+	.argument("<name>")
+	.description("Print a project flow script")
+	.action(async (name) => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const script = await readFlowScript(workspace, name);
+			console.log(script.body.trimEnd());
+		});
+	});
+
+flow
+	.command("write")
+	.argument("<name>")
+	.requiredOption("--from <file|->", "Read replacement script from a file or stdin")
+	.description("Create or replace a project flow script")
+	.action(async (name, options) => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const body = await readInputSource(options.from);
+			const script = await writeFlowScript(workspace, name, body);
+			console.log(`Wrote flow ${script.name}`);
+			console.log(`Script: ${script.path}`);
+		});
+	});
+
+flow
+	.command("show")
+	.argument("<run-id>")
+	.description("Show a flow run summary")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const summaryPath = join(workspace.goalPath, "flows", "runs", id, "summary.md");
+			console.log(await readFile(summaryPath, "utf-8"));
+		});
+	});
+
+flow
+	.command("watch")
+	.argument("<run-id>")
+	.description("Tail a flow run's events.jsonl and exit when it finishes or on Ctrl-C")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = await currentOrInitWorkspace();
+			const controller = new AbortController();
+			const onSigint = () => controller.abort();
+			process.on("SIGINT", onSigint);
+			try {
+				const result = await watchFlowRun(workspace, id, { signal: controller.signal });
+				if (result.finished) {
+					console.log(`Flow run ${result.runId} finished`);
+					console.log(`Summary: ${join(result.runPath, "summary.md")}`);
+				} else {
+					console.log(`Stopped watching flow run ${result.runId}`);
+				}
+			} finally {
+				process.off("SIGINT", onSigint);
+			}
+		});
+	});
+
 const skills = program.command("skills").description("Manage agent-board skill links");
 
 skills
@@ -537,6 +774,19 @@ function currentWorkspace(): Workspace {
 	});
 }
 
+async function currentOrInitWorkspace(): Promise<Workspace> {
+	try {
+		return currentWorkspace();
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.includes("No agent-board project found")) {
+			throw error;
+		}
+		const { workspace } = await initWorkspace(process.cwd());
+		console.warn(`Initialized ${workspace.projectSlug}`);
+		return workspace;
+	}
+}
+
 function cliScopeOverrides(): { project?: string; goal?: string } {
 	const result: { project?: string; goal?: string } = {};
 	for (let i = 2; i < process.argv.length; i++) {
@@ -549,10 +799,35 @@ function cliScopeOverrides(): { project?: string; goal?: string } {
 	return result;
 }
 
+function installScopeOverrideOptions(command: Command): void {
+	for (const child of command.commands) installScopeOverrideOptionsForCommand(child);
+}
+
+function installScopeOverrideOptionsForCommand(command: Command): void {
+	addOptionIfMissing(command, "--project <slug>", "Project slug override");
+	addOptionIfMissing(command, "--goal <slug>", "Goal slug override");
+	for (const child of command.commands) installScopeOverrideOptionsForCommand(child);
+}
+
+function addOptionIfMissing(
+	command: Command,
+	flags: string,
+	description: string,
+): void {
+	const long = flags.match(/--[a-z-]+/)?.[0];
+	if (!long || command.options.some((option) => option.long === long)) return;
+	command.option(flags, description);
+}
+
 function readOptions<T extends Record<string, unknown>>(value: T | { opts(): T }): T {
 	return typeof (value as { opts?: unknown }).opts === "function"
 		? (value as { opts(): T }).opts()
 		: value as T;
+}
+
+async function readInputSource(source: string): Promise<string> {
+	if (source === "-") return new Response(Bun.stdin.stream()).text();
+	return readFile(source, "utf-8");
 }
 
 function printPlanSection(
@@ -626,4 +901,5 @@ async function main(fn: () => Promise<void>): Promise<void> {
 	}
 }
 
+installScopeOverrideOptions(program);
 program.parse();

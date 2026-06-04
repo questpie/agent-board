@@ -99,23 +99,35 @@ export async function getSpec(
 	return getScopedDocument(workspace, "specs", id, "Spec");
 }
 
-export async function readScopedDocuments(
+export async function getKnowledge(
+	workspace: Workspace,
+	id: string,
+): Promise<AgentDocument> {
+	return getScopedDocument(workspace, "knowledge", id, "Knowledge");
+}
+
+export async function writeSpecBody(
+	workspace: Workspace,
+	id: string,
+	body: string,
+): Promise<AgentDocument> {
+	return writeScopedDocumentBody(workspace, "specs", id, "Spec", body, SPEC_ORDER);
+}
+
+export async function writeKnowledgeBody(
+	workspace: Workspace,
+	id: string,
+	body: string,
+): Promise<AgentDocument> {
+	return writeScopedDocumentBody(workspace, "knowledge", id, "Knowledge", body, KNOWLEDGE_ORDER);
+}
+
+async function readScopedDocuments(
 	workspace: Workspace,
 	kind: "specs" | "knowledge",
 	scope: OverlayScope,
 ): Promise<AgentDocument[]> {
 	return listDocuments(overlayDir(workspace, scope, kind), scope);
-}
-
-export async function resolveSpecRefs(
-	workspace: Workspace,
-	refs: string[],
-): Promise<AgentDocument[]> {
-	const docs: AgentDocument[] = [];
-	for (const ref of refs) {
-		docs.push(await getSpec(workspace, ref));
-	}
-	return docs;
 }
 
 export function parseScope(value: string): OverlayScope {
@@ -157,6 +169,21 @@ async function getScopedDocument(
 		if (existsSync(path)) return readDocument(path, scope);
 	}
 	throw new Error(`${label} not found: ${ref}`);
+}
+
+async function writeScopedDocumentBody(
+	workspace: Workspace,
+	kind: "specs" | "knowledge",
+	ref: string,
+	label: string,
+	body: string,
+	order: string[],
+): Promise<AgentDocument> {
+	const doc = await getScopedDocument(workspace, kind, ref, label);
+	doc.body = normalizeBody(body);
+	doc.meta.updated = nowIso();
+	await writeDocument(doc, order);
+	return doc;
 }
 
 function parseQualifiedDocRef(
@@ -220,4 +247,8 @@ function normalizeDocumentMeta(
 
 function capitalize(value: string): string {
 	return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function normalizeBody(body: string): string {
+	return body.endsWith("\n") ? body : `${body}\n`;
 }

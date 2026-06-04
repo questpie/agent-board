@@ -1,64 +1,45 @@
 export const skillReadme = `---
 name: agent-board
-description: "Orchestrate and plan work with agent-board: goals, specs, task graphs, dependencies, sprints, and delegating tasks to workers. Use when planning, breaking down work, running sprints/multitask, delegating, or reviewing task state. Orchestrator mode by default — delegate implementation to a worker that follows the agent-board-worker skill rather than coding yourself. Triggers: agent-board, sprint, plan, goal, delegate, multitask, orchestrate, task board, backlog."
+description: "Orchestrate and plan work with agent-board: goals, specs, task graphs, dependencies, flows, sprints, and delegating tasks to workers. Use when planning whole features, breaking work into goals/tasks/subtasks, running multi-agent flow fan-out/review/synthesis, or reviewing task state. Orchestrator mode by default — delegate implementation to a worker that follows the agent-board-worker skill. Triggers: agent-board, flow, sprint, plan, goal, delegate, multitask, orchestrate, task board, backlog."
 ---
 
 # Agent Board
 
-Use when managing project goals, tasks, specs, knowledge, or agent delegation with \`agent-board\`.
+Use when controlling agent-board work: goals, specs, task graph, delegation, flow waves, and review. This is the controller/orchestrator skill, not the implementation skill.
 
-## Why This Exists
+## Role
 
-\`agent-board\` keeps durable state out of chat: goals narrow focus; tasks are executable units; specs hold reasoning/criteria; knowledge holds reusable facts. Update the board when plans, blockers, or task graphs change.
+- Keep durable state in \`agent-board\`, not hidden in chat.
+- Create goals/specs/tasks, link dependencies, delegate explicit task ids, review evidence, and decide the next wave.
+- Do not claim or implement tasks yourself unless the user explicitly switches you into worker mode.
 
-## Core Loop
+## Controller Loop
 
-1. Run \`agent-board status\` and \`agent-board plan --related\` when cross-project work may matter.
-2. Read the active task, linked specs, and knowledge.
-3. If vague, research before implementation.
-4. Split broad work into linked tasks.
-5. Delegate ready tasks to worker sub-agents (agent-board-worker skill); review task Evidence and status before next decisions.
-6. Store reasoning in specs and reusable facts in knowledge.
+1. Run \`agent-board status\`; use \`agent-board plan --related\` only when related projects matter.
+2. Read the relevant task/specs/knowledge before deciding.
+3. For broad work, create or choose a goal, write a spec, then split into linked tasks. Subtasks are small linked tasks, not checklist prose.
+4. Delegate ready implementation to workers that use \`agent-board-worker\` and a specific task id.
+5. Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, then run multi-agent fan-out, reviews, or synthesis after user approval unless execution was already explicit.
+6. Read \`summary.md\` first; inspect \`agents/*.md\` or \`diagnostics.jsonl\` only when needed.
+7. Update tasks/specs/knowledge from evidence, then choose the next wave.
 
-## Modes
+## Delegation Contract
 
-- Orchestrator mode is default (this skill): plan, create specs/tasks, link blockers, delegate to workers, review evidence, decide next steps. Do not claim or edit implementation tasks yourself.
-- To implement a concrete task, switch to the **agent-board-worker** skill: claim -> checkout branch -> implement -> verify -> done.
-- For discovery or audit before implementation, use the **agent-board-research** skill (read-only).
+- Worker prompt must include the task id and say to use \`agent-board-worker\`.
+- Research/audit prompt should use \`agent-board-research\` and stay read-only.
+- Flow scripts are agent-authored orchestration tools. The main chat remains controller; spawned agents do not own roadmap, branch, commit, or final done decisions.
 
-## Recipes
+## Commands To Reach For
 
-- New slice: \`status\` -> \`goals\` -> \`goal new/use\` -> \`spec new\` -> \`new\` tasks -> \`link\` dependencies -> mark ready work.
-- Delegate next task: \`plan --related\` -> choose ready task -> hand it to a worker sub-agent (agent-board-worker skill) on that task id -> review the task's Evidence and status.
-- After a worker finishes: read the task Evidence, update specs/knowledge/tasks, create follow-ups, unblock/ready/done only with evidence.
-- Blocker: \`block <task> "<reason>"\`, create dependency or question task, re-run \`plan --related\`.
-
-## Operating Rules
-
-- In worker mode, use \`agent-board claim <task-id> --agent <name>\` before implementation.
-- Use \`agent-board link <from> --blocks <to>\` for dependencies.
-- Use \`agent-board block <task-id> "<reason>"\` for missing info or unmet dependencies.
-- Keep task files concise; verify evidence lives in the task's Evidence section.
-
-## Scope Rules
-
-- Project scope: repo-level specs/knowledge defaults.
-- Goal scope: slice-specific notes and temporary decisions.
-- Global scope: reusable cross-project knowledge.
-- Tasks are goal-level execution state.
-- Cross-project refs: \`task:<project>/<goal>/<task>\`.
-
-## Concurrency
-
-When delegating to several workers at once (or running multiple agents):
-
-- Give each worker a distinct goal and pin it: \`AGENT_BOARD_PROJECT=<slug> AGENT_BOARD_GOAL=<goal>\`. Do not depend on the active goal (\`goal use\`) for concurrent work — it is shared mutable state.
-- Across different projects (different repos) agents are isolated automatically; only initialize projects one at a time.
-- If workers share one repository, create a git worktree per worker and pass \`AGENT_BOARD_REPO=<worktree>\` so they don't fight over the same checkout/branch.
+- \`agent-board status\`, \`agent-board plan --related\`
+- \`agent-board goal new/use\`, \`agent-board spec new\`, \`agent-board knowledge add\`
+- \`agent-board new\`, \`agent-board link <from> --blocks <to>\`, \`agent-board block <task> "<reason>"\`
+- \`agent-board task/spec/knowledge cat|write\`, \`agent-board flow new <name> --template feature|review|fix\`, \`agent-board flow cat|write\`, \`agent-board flow run <name>\`
 
 ## References
 
 - \`references/pm-orchestrator.md\` - PM loop, task breakdown, blockers, parallelization.
+- \`references/flow-orchestration.md\` - controller loop, fan-out, cross-agent reviews, synthesis, and staged execution.
 - \`references/task-workflow.md\` - worker lifecycle for picking up and closing tasks.
 - \`references/research-workflow.md\` - discovery, specs, and task creation.
 - \`references/review-workflow.md\` - review, validation, and follow-up tasks.
@@ -68,12 +49,12 @@ When delegating to several workers at once (or running multiple agents):
 export const skillAgents = `# Agent Board Rules
 
 - Start with \`agent-board status\`; use \`agent-board plan --related\` for cross-project blockers.
-- Default to orchestrator mode: do not claim/edit implementation tasks unless explicitly asked or you are the worker.
-- Delegate ready work to a worker sub-agent (agent-board-worker skill); review the task's Evidence and status before deciding next steps.
-- Read task + linked specs/knowledge before editing.
-- In worker mode, claim before implementation; block with a concrete reason when stuck.
-- Write durable decisions to specs, reusable facts/gotchas to knowledge.
-- Keep task Markdown concise; logs stay in run folders.
+- Controller mode: plan, create specs/tasks, link blockers, delegate, review evidence. Do not claim/edit implementation tasks unless explicitly asked.
+- Broad features become a goal/spec plus linked tasks; subtasks are first-class tasks, not hidden checklist prose.
+- Worker delegation must include a concrete task id and the \`agent-board-worker\` skill.
+- Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, summarize phases, then \`flow run\` after approval or explicit go-ahead.
+- Read flow \`summary.md\` before per-agent outputs; open \`diagnostics.jsonl\` only for runtime debugging.
+- Keep task Markdown concise; logs stay in flow/run folders.
 `;
 
 export const workerSkillReadme = `---
@@ -87,6 +68,7 @@ Use this skill when implementing or fixing ONE concrete agent-board task. You ar
 
 ## Mandatory sequence
 
+0. If no task id was provided, stop and ask. Do not pick \`agent-board next\` on your own.
 1. Read the task and its context: \`agent-board show <task-id>\` (goal, acceptance criteria, \`## Verify\` block, target branch).
 2. Get on the right branch BEFORE any edit or commit:
    - Run \`git branch --show-current\`. Never commit on a detached HEAD.
@@ -115,6 +97,7 @@ Use this skill when implementing or fixing ONE concrete agent-board task. You ar
 - Your project, goal, and repo are pinned via environment: \`AGENT_BOARD_PROJECT\`, \`AGENT_BOARD_GOAL\`, and (for a git worktree) \`AGENT_BOARD_REPO\`. Work only inside them.
 - Never run \`agent-board goal use\` — the active goal is shared mutable state; switching it derails every other agent in the project.
 - If you share one repository with another agent, work in your own git worktree and set \`AGENT_BOARD_REPO\` to it, so checkouts, branches, and verify do not collide.
+- If spawned by \`agent-board flow\`, you are still a normal worker. The flow runner does not waive claim, branch, verify, or evidence rules.
 
 ## Don't
 
@@ -183,6 +166,8 @@ Use this skill when setting up or changing \`agent-board\` itself in a project.
 - Project config: \`project.json\` with \`repo_path\`, \`active_goal\`, and \`related_projects\`.
 - Goals: \`projects/<project-slug>/goals/<goal-slug>\`.
 - Tasks are goal-level only.
+- Project flow scripts: \`projects/<project-slug>/flows/*.mjs\`.
+- Flow run artifacts: \`projects/<project-slug>/goals/<goal-slug>/flows/runs/<run-id>/\`.
 - Specs and knowledge: overlay layers at global, project, and goal scope.
 - Skills: \`~/.agent-board/skills/{agent-board,agent-board-worker,agent-board-research}\`, linked globally into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`.
 
@@ -217,14 +202,6 @@ agent-board tasks
 \`\`\`
 `;
 
-export const configSkillAgents = `# Agent Board Configuration Rules
-
-- Treat \`~/.agent-board\` as the only source of truth.
-- Prefer editing global/project/goal specs and knowledge overlays over changing CLI source code.
-- Do not overwrite existing \`~/.claude/skills\`, \`~/.agents/skills\`, or \`~/.cursor/skills\` agent-board links without explicit user approval.
-- Use \`AGENT_BOARD_HOME\` only for tests, sandboxes, or intentionally isolated workspaces.
-`;
-
 export const taskWorkflowReference = `# Task Workflow
 
 Use this reference when picking up, running, blocking, reviewing, or closing a task.
@@ -233,8 +210,8 @@ A task is the smallest executable unit. It should be concrete enough to claim, r
 
 Use this reference in worker mode. If you are acting as PM/orchestrator, delegate the task to a worker sub-agent instead of doing it yourself.
 
-1. Run \`agent-board status\` to understand current work.
-2. Run \`agent-board next\` or inspect \`agent-board tasks\`; read the task with \`agent-board show <task-id>\`.
+1. Start from the task id provided by the controller. If no task id was provided, stop and ask.
+2. Read the task with \`agent-board show <task-id>\`.
 3. Get on the task branch before editing; never commit on a detached HEAD (check \`git branch --show-current\`).
 4. Claim work before editing: \`agent-board claim <task-id> --agent <your-name>\` (rejected on a detached HEAD or with unfinished dependencies).
 5. Implement on that branch.
@@ -242,6 +219,8 @@ Use this reference in worker mode. If you are acting as PM/orchestrator, delegat
 7. Before done, run \`agent-board verify <task-id>\` (executes the task \`## Verify\` block and records evidence); then \`agent-board done <task-id>\`.
 
 If too broad, create smaller linked tasks. If stuck, block with a concrete reason.
+
+When a broad task needs subtasks, create sibling tasks under the same goal and link them with \`agent-board link <from> --blocks <to>\`. Do not hide executable subtasks only inside prose.
 
 Markdown is the source of truth. Manual edits are fine when frontmatter remains valid.
 `;
@@ -259,22 +238,59 @@ PM owns focus/state, not hidden implementation. Clarify goals, create specs/task
 5. Break large goals into small implementation tasks with \`agent-board new\`.
 6. Use \`agent-board link <from> --blocks <to>\` for ordering.
 7. Use \`agent-board link <task> --spec <spec>\` to keep context attached.
-8. Delegate execution to worker sub-agents (agent-board-worker skill) instead of doing all work directly.
-9. Review each task's Evidence and status before deciding next steps.
-10. Create follow-up tasks for actionable review findings.
+8. Use \`agent-board flow run\` when the next wave benefits from fan-out research, cross-agent review, or synthesis.
+9. Delegate execution to worker sub-agents (agent-board-worker skill) instead of doing all work directly.
+10. Review flow summaries, per-task Evidence, and status before deciding next steps.
+11. Create follow-up tasks for actionable review findings.
 
-Recipes: for new slices create goal/spec/tasks/dependencies; for ready work hand each task to a worker (agent-board-worker); review Evidence, update board state, create follow-ups, and only then mark ready/done.
+Recipes: for new slices create goal/spec/tasks/dependencies; for discovery run fan-out flows; for ready work hand each task to a worker (agent-board-worker); run cross-agent reviews when risk warrants; review Evidence, update board state, create follow-ups, and only then mark ready/done.
 
 Triage rules: ready tasks are independently executable; blocked tasks need concrete blockers; parallel lanes are independent ready tasks; cross-project blockers use qualified refs + \`agent-board plan --related\`; specs explain why, tasks explain what next.
 `;
 
-export const pmOrchestratorAgents = `# PM Orchestrator Rules
+export const flowOrchestrationSkillReadme = `# Flow Orchestration
 
-- Do not lose the goal. Keep task breakdown tied to specs and acceptance criteria.
-- Prefer creating small linked tasks over one vague mega-task.
-- Mark blockers explicitly and keep ready work unblocked.
-- Delegate worker execution to sub-agents that follow the agent-board-worker skill.
-- After each task, review its Evidence and update task/spec state.
+Use this reference when the main chat is controlling multi-agent execution with \`agent-board flow\`.
+
+The CLI is for agents, not for humans. The user should be able to say, in natural language, what they want done. The controller agent then uses these commands as tools.
+
+The controller loop is:
+
+1. Confirm the active project/goal: \`agent-board status\`, \`agent-board goals\`.
+2. Write or update the feature spec.
+3. Break the feature into linked tasks. Subtasks are first-class tasks linked with blockers/dependencies.
+4. For non-trivial orchestration, create a workflow script:
+   - run \`agent-board flow new <name> --template feature|review|fix\`
+   - inspect/edit the generated script with \`agent-board flow cat/write\`
+   - encode phases, fan-out, reviews, synthesis, and task/evidence updates in the script
+   - summarize the script's phases to the user and ask for confirmation before running, unless the user already explicitly approved execution
+5. Run a flow wave for the next uncertainty or work batch:
+   - fan-out research: independent agents inspect different risks or subsystems
+   - implementation wave: workers handle distinct ready tasks
+   - cross-agent review: reviewers inspect outputs/patches from other agents
+   - synthesis: one agent summarizes findings into decisions and next steps
+6. Read \`summary.md\` first. Open \`agents/*.md\` only for details. Open \`diagnostics.jsonl\` only for runtime/debug issues.
+7. Update specs, tasks, blockers, and follow-ups from the evidence.
+8. Decide the next wave. The main chat remains the controller; spawned agents do not choose the whole roadmap.
+
+Safe defaults:
+
+- Use Codex runtime first.
+- Same worktree is acceptable for P0 when the generated script prevents agents from fighting: no branch switching, no commits, no resets/rebases, no overlapping file edits, and no concurrent git operations from spawned agents.
+- For true concurrent write-heavy work, prefer one git worktree per writer and pass \`AGENT_BOARD_REPO\`.
+- Flow agents default to \`mode: "read"\` (enforced via \`auto-reject\`: native file reads only, no shell, no edits). Cross-agent reviews and research stay read-only; only opt a role into \`mode: "write"\` when the controller explicitly wants it to edit.
+- The controller owns git state and final decisions. Spawned agents do not choose branches, commit policy, or roadmap.
+
+Agent-side command pattern:
+
+\`\`\`sh
+agent-board flow new <name> --template feature
+agent-board flow cat <name>
+agent-board flow write <name> --from ./flow.mjs
+agent-board flow run <name> --input "<scope>" --task <task-id>
+\`\`\`
+
+Flow scripts get \`agent()\`, \`parallel()\`, \`log()\`, \`input\`, and workspace metadata. Keep scripts small: orchestration belongs in the script, durable decisions belong in specs/tasks/knowledge. Use \`flow run "<goal>"\` without a script only for quick read-only fan-out; implementation loops should use an explicit script the controller can inspect.
 `;
 
 export const researchWorkflowSkillReadme = `# Research Workflow
@@ -292,13 +308,6 @@ Research turns uncertainty into durable context: files, APIs, risks, missing dec
 Output should answer: relevant files/APIs, existing patterns, missing decisions, parallelizable work, blockers.
 `;
 
-export const researchWorkflowAgents = `# Research Workflow Rules
-
-- Research first, implement later unless explicitly asked to fix something.
-- Prefer file references and concrete risks over vague notes.
-- Convert discoveries into specs, knowledge, and actionable tasks.
-`;
-
 export const reviewWorkflowSkillReadme = `# Review Workflow
 
 Use this skill for review, validation, and final checks.
@@ -312,11 +321,4 @@ Review prevents false completion. Find concrete bugs, missing tests, regressions
 - Keep review notes concise and actionable.
 
 If no actionable issues, say so and note residual risk or checks not run.
-`;
-
-export const reviewWorkflowAgents = `# Review Workflow Rules
-
-- Findings first, ordered by severity.
-- Tie each finding to concrete files, commands, or task criteria.
-- Create tasks for follow-ups instead of burying work in prose.
 `;

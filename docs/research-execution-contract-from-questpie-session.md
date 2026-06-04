@@ -1,5 +1,7 @@
 # Research brief: agent-board execution contract
 
+> Historical note: this brief records the original May 2026 investigation and includes superseded details. For current behavior, start with [README.md](../README.md), [docs/concepts.md](concepts.md), [docs/flows.md](flows.md), [docs/cli-reference.md](cli-reference.md), and [docs/rfc-execution-contract.md](rfc-execution-contract.md).
+
 **Source:** Real usage session orchestrating type-flow remediation on `questpie-cms` (May 2026)  
 **Audience:** Claude / PM — research & planning for `agent-board` product improvements  
 **Repo analyzed:** `/Users/drepkovsky/questpie/repos/agent-board` (v0.1.0)

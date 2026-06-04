@@ -7,7 +7,8 @@ import { createSpec } from "../src/documents.js";
 import { gitState } from "../src/git.js";
 import { atomicWrite } from "../src/utils.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
-import { parseVerifyCommands } from "../src/verify.js";
+import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
+import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseStructuredOutput, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 
 describe("markdown frontmatter", () => {
@@ -128,6 +129,125 @@ describe("verify", () => {
 	test("returns no commands for empty or absent blocks", () => {
 		expect(parseVerifyCommands("## Verify\n\n<!-- none -->\n")).toEqual([]);
 		expect(parseVerifyCommands("## Goal\n\nNothing here.\n")).toEqual([]);
+	});
+
+	test("surfaces output tail for failed commands, keeps passing one-line", async () => {
+		const results = await runVerify(process.cwd(), [
+			"echo hello-pass",
+			"echo boom-marker >&2; exit 3",
+		]);
+		expect(results[0]!.exitCode).toBe(0);
+		expect(results[1]!.exitCode).toBe(3);
+		const evidence = formatVerifyEvidence(results, "2026-05-29T00:00:00.000Z", null);
+		expect(evidence).toContain("- `echo hello-pass` exit=0");
+		expect(evidence).toContain("- `echo boom-marker >&2; exit 3` exit=3");
+		expect(evidence).toContain("boom-marker");
+		expect(evidence).not.toContain("hello-pass\n```");
+	});
+
+	test("kills a hanging command on timeout and records it as failure", async () => {
+		process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS = "200";
+		try {
+			const results = await runVerify(process.cwd(), ["sleep 30"]);
+			expect(results[0]!.exitCode).toBe(124);
+			expect(results[0]!.output).toContain("timed out after");
+		} finally {
+			delete process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS;
+		}
+	});
+});
+
+describe("flow agent mode", () => {
+	test("maps read to auto-reject and write to auto-allow, defaulting to read", () => {
+		expect(DEFAULT_FLOW_AGENT_MODE).toBe("read");
+		expect(modeToPermission("read")).toBe("auto-reject");
+		expect(modeToPermission("write")).toBe("auto-allow");
+		expect(modeToPermission(DEFAULT_FLOW_AGENT_MODE)).toBe("auto-reject");
+	});
+});
+
+describe("flow Codex ACP override", () => {
+	test("resolves AGENT_BOARD_CODEX_ACP_BIN when set", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agent-board-codex-acp-"));
+		const bin = join(dir, "codex-acp");
+		await writeFile(bin, "");
+		const previous = process.env.AGENT_BOARD_CODEX_ACP_BIN;
+		try {
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = bin;
+			expect(resolveCodexAcpBin()).toEqual({ path: bin, source: "env" });
+
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = " ";
+			expect(resolveCodexAcpBin()?.source).not.toBe("env");
+		} finally {
+			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
+			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
+		}
+	});
+
+	test("rejects a missing AGENT_BOARD_CODEX_ACP_BIN path", () => {
+		const previous = process.env.AGENT_BOARD_CODEX_ACP_BIN;
+		try {
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = join(tmpdir(), "missing-codex-acp");
+			expect(() => resolveCodexAcpBin()).toThrow("AGENT_BOARD_CODEX_ACP_BIN");
+		} finally {
+			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
+			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
+		}
+	});
+});
+
+describe("flow structured output", () => {
+	const schema = {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			title: { type: "string" },
+			severity: { type: "string", enum: ["high", "low"] },
+			count: { type: "integer" },
+		},
+		required: ["title", "severity", "count"],
+	} as const;
+
+	test("parses and validates fenced JSON", () => {
+		expect(parseStructuredOutput('```json\n{"title":"A","severity":"high","count":2}\n```', schema)).toEqual({
+			title: "A",
+			severity: "high",
+			count: 2,
+		});
+	});
+
+	test("rejects schema drift", () => {
+		expect(() =>
+			parseStructuredOutput('{"title":"A","severity":"medium","count":2,"extra":true}', schema),
+		).toThrow("Structured output failed schema validation");
+	});
+});
+
+describe("runLimited", () => {
+	test("stops scheduling new tasks once one fails", async () => {
+		let started = 0;
+		const tasks = Array.from({ length: 6 }, (_unused, index) => async () => {
+			started++;
+			if (index === 0) throw new Error("boom");
+			return index;
+		});
+
+		await expect(runLimited(tasks, 1)).rejects.toThrow("boom");
+		expect(started).toBe(1);
+	});
+
+	test("lets in-flight workers finish but pulls no new tasks after a failure", async () => {
+		let started = 0;
+		const tasks = Array.from({ length: 6 }, (_unused, index) => async () => {
+			started++;
+			if (index === 0) throw new Error("boom");
+			await Bun.sleep(1);
+			return index;
+		});
+
+		await expect(runLimited(tasks, 2)).rejects.toThrow("boom");
+		expect(started).toBe(2);
+		expect(started).toBeLessThan(tasks.length);
 	});
 });
 

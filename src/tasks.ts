@@ -71,6 +71,18 @@ export async function updateTask(
 	id: string,
 	update: (task: TaskFile) => void,
 ): Promise<TaskFile> {
+	const taskPath = join(taskDir(workspace), `${id}.md`);
+	return withTaskLock(taskPath, async () => updateTaskUnlocked(workspace, id, update));
+}
+
+// Read-modify-write core without the task lock. Callers that already hold the
+// lock for this task path (e.g. writeTaskBody) must use this to avoid a
+// non-reentrant double-lock on the same path.
+async function updateTaskUnlocked(
+	workspace: Workspace,
+	id: string,
+	update: (task: TaskFile) => void,
+): Promise<TaskFile> {
 	const task = await getTask(workspace, id);
 	update(task);
 	task.meta.updated = nowIso();
@@ -85,6 +97,10 @@ export async function linkTasks(
 ): Promise<void> {
 	const from = resolveTaskRef(workspace, fromRef);
 	const to = resolveTaskRef(workspace, toRef);
+	// Validate BOTH endpoints exist before any write, so a typo in the target
+	// can't leave a dangling ref half-applied to the source's blocks array.
+	await getTask(from.workspace, from.id);
+	await getTask(to.workspace, to.id);
 	await updateTask(from.workspace, from.id, (task) => {
 		task.meta.blocks = unique([...task.meta.blocks, formatTaskRefFor(from.workspace, to)]);
 	});
@@ -123,7 +139,36 @@ export async function getTask(
 	return readTaskFile(path);
 }
 
+export async function writeTaskBody(
+	workspace: Workspace,
+	id: string,
+	body: string,
+): Promise<TaskFile> {
+	const taskPath = join(taskDir(workspace), `${id}.md`);
+	return withTaskLock(taskPath, async () => updateTaskUnlocked(workspace, id, (task) => {
+		const nextBody = normalizeBody(body);
+		if (task.body !== nextBody) {
+			task.meta.verified = "";
+			task.meta.verified_sha = "";
+		}
+		task.body = nextBody;
+	}));
+}
+
 export async function setTaskStatus(
+	workspace: Workspace,
+	id: string,
+	status: string,
+	options: { assignee?: string; blockReason?: string; force?: boolean; reason?: string } = {},
+): Promise<TaskFile> {
+	const taskPath = join(taskDir(workspace), `${id}.md`);
+	return withTaskLock(taskPath, async () => setTaskStatusUnlocked(workspace, id, status, options));
+}
+
+// Read-modify-write core without the task lock. claimTask already holds the
+// lock for this path and calls this directly to avoid a non-reentrant
+// double-lock that would self-deadlock.
+async function setTaskStatusUnlocked(
 	workspace: Workspace,
 	id: string,
 	status: string,
@@ -211,7 +256,7 @@ export async function claimTask(
 			}
 		}
 
-		const claimed = await setTaskStatus(workspace, id, "in_progress", {
+		const claimed = await setTaskStatusUnlocked(workspace, id, "in_progress", {
 			assignee: options.agent,
 		});
 		return { task: claimed, warnings };
@@ -377,4 +422,8 @@ export function appendEvidence(body: string, entry: string): string {
 
 function unique(values: string[]): string[] {
 	return [...new Set(values.filter(Boolean))];
+}
+
+function normalizeBody(body: string): string {
+	return body.endsWith("\n") ? body : `${body}\n`;
 }

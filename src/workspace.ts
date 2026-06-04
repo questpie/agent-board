@@ -1,11 +1,12 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, symlink } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace } from "./types.js";
 import { atomicWrite, ensureDir, getHomeRoot, nowIso, projectSlugFromCwd, slugify } from "./utils.js";
 import {
 	configSkillReadme,
+	flowOrchestrationSkillReadme,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
 	researchSkillReadme,
@@ -251,13 +252,11 @@ export async function migrateWorkspace(
 	});
 
 	const goalPath = await ensureGoal(projectPath, DEFAULT_GOAL, "Main");
-	for (const name of ["tasks", "specs", "knowledge"] as const) {
-		const from = join(projectPath, name);
-		const to = join(goalPath, name);
-		if (existsSync(from)) {
-			await copyDirContents(from, to);
-			migrated.push(name);
-		}
+	const legacyTasks = join(projectPath, "tasks");
+	if (existsSync(legacyTasks)) {
+		await copyDirContents(legacyTasks, join(goalPath, "tasks"));
+		await rm(legacyTasks, { recursive: true, force: true });
+		migrated.push("tasks");
 	}
 
 	return {
@@ -277,7 +276,7 @@ async function ensureRootLayout(root: string): Promise<void> {
 }
 
 async function ensureProjectLayout(projectPath: string): Promise<void> {
-	for (const dir of ["specs", "knowledge", "goals"]) {
+	for (const dir of ["specs", "knowledge", "flows", "goals"]) {
 		await ensureDir(join(projectPath, dir));
 	}
 }
@@ -302,6 +301,7 @@ async function installBundledSkills(root: string): Promise<void> {
 	await writeBundledSkill(join(skillRoot, "SKILL.md"), skillReadme);
 	await writeBundledSkill(join(skillRoot, "AGENTS.md"), skillAgents);
 	await writeBundledSkill(join(skillRoot, "references", "config.md"), configSkillReadme);
+	await writeBundledSkill(join(skillRoot, "references", "flow-orchestration.md"), flowOrchestrationSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "pm-orchestrator.md"), pmOrchestratorSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "task-workflow.md"), taskWorkflowReference);
 	await writeBundledSkill(join(skillRoot, "references", "research-workflow.md"), researchWorkflowSkillReadme);
