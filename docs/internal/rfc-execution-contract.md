@@ -26,23 +26,23 @@ Every gap in brief §4 was checked against the actual code. All confirmed.
 
 | Brief claim | Status | Evidence in code |
 |---|---|---|
-| `TaskMeta` has no `branch`/`verify`/`evidence`/`size` | ✅ Confirmed | [types.ts:16](../src/types.ts) — fields end at `relates_to`/`created`/`updated` |
-| `done` only checks `hasUncheckedCriteria()`; `--force` no reason | ✅ Confirmed | [tasks.ts:128](../src/tasks.ts), [index.ts:448](../src/index.ts) — only `--force` flag |
-| Runner sets `in_progress` with `force: true` | ✅ Confirmed | [runner.ts:14](../src/runner.ts) |
-| `writeSummary()` logs only exit codes | ✅ Confirmed | [runner.ts:235](../src/runner.ts) — `exit=${step.exitCode}` lines |
+| `TaskMeta` has no `branch`/`verify`/`evidence`/`size` | ✅ Confirmed | [types.ts:16](../../src/types.ts) — fields end at `relates_to`/`created`/`updated` |
+| `done` only checks `hasUncheckedCriteria()`; `--force` no reason | ✅ Confirmed | [tasks.ts:128](../../src/tasks.ts), [index.ts:448](../../src/index.ts) — only `--force` flag |
+| Runner sets `in_progress` with `force: true` | ✅ Confirmed | [runner.ts:14](../../src/runner.ts) |
+| `writeSummary()` logs only exit codes | ✅ Confirmed | [runner.ts:235](../../src/runner.ts) — `exit=${step.exitCode}` lines |
 | `git.ts` does not exist | ✅ Confirmed | no file in `src/` |
 | `verify.ts` does not exist | ✅ Confirmed | no file in `src/` |
-| Skills install links `.claude` + `.agents`, not Cursor | ✅ Confirmed | [workspace.ts:189-190](../src/workspace.ts) |
-| No `export` / `worker-pack` / `next --context` | ✅ Confirmed | [index.ts:174](../src/index.ts) `next` prints one line |
-| `claim` has no deps/assignee/status guards | ✅ Confirmed | [index.ts:322](../src/index.ts) → `setTaskStatus(in_progress)` only |
+| Skills install links `.claude` + `.agents`, not Cursor | ✅ Confirmed | [workspace.ts:189-190](../../src/workspace.ts) |
+| No `export` / `worker-pack` / `next --context` | ✅ Confirmed | [index.ts:174](../../src/index.ts) `next` prints one line |
+| `claim` has no deps/assignee/status guards | ✅ Confirmed | [index.ts:322](../../src/index.ts) → `setTaskStatus(in_progress)` only |
 
 **Additional findings the brief did not capture:**
 
 1. **Frontmatter parser cannot hold structured verify** (§2.1) — the single most important design constraint.
-2. **Snapshot tests pin the skills layout.** [cli.test.ts:40-49](../test/cli.test.ts) asserts the exact `skills/` dir list and `references/` file list. Any skill split or new reference file **breaks these tests** — another reason to keep skills out of PR1.
-3. **Runner spawns agents at `workspace.cwd`, not `workspace.repoPath`** ([runner.ts:106](../src/runner.ts)). Verify should run from `repoPath` for determinism (they are usually equal, but not guaranteed — `cwd` is `process.cwd()`, `repoPath` is the registered root).
+2. **Snapshot tests pin the skills layout.** [cli.test.ts:40-49](../../test/cli.test.ts) asserts the exact `skills/` dir list and `references/` file list. Any skill split or new reference file **breaks these tests** — another reason to keep skills out of PR1.
+3. **Runner spawns agents at `workspace.cwd`, not `workspace.repoPath`** ([runner.ts:106](../../src/runner.ts)). Verify should run from `repoPath` for determinism (they are usually equal, but not guaranteed — `cwd` is `process.cwd()`, `repoPath` is the registered root).
 4. **No existing test calls `claim` or `done`.** Adding guards to those paths will not break the current suite (baseline: **11 pass, typecheck clean**).
-5. **`renderPrompt` already assembles task + specs + knowledge + guidance** ([workflow.ts:65](../src/workflow.ts)). `export` should reuse this machinery, not reimplement context loading.
+5. **`renderPrompt` already assembles task + specs + knowledge + guidance** ([workflow.ts:65](../../src/workflow.ts)). `export` should reuse this machinery, not reimplement context loading.
 
 ---
 
@@ -54,7 +54,7 @@ But the **first PR** scope is the enforcement core, for four concrete reasons:
 
 1. **The skills reference commands that must exist first.** A worker skill that says "run `agent-board verify <id>`" is a lie until `verify` ships. Building the verbs first means the skill rewrite can point at real, tested commands.
 2. **Enforcement core is independently testable and low-risk.** git/verify/meta are pure additions behind feature-gated behavior (no verify block = old behavior). No snapshot tests touched.
-3. **Skills split is high-churn.** It breaks the layout snapshot tests ([cli.test.ts:40-49](../test/cli.test.ts)), touches install paths, and depends on an *unverified* Cursor skills directory (§3, Q2). Worth doing carefully in its own PR.
+3. **Skills split is high-churn.** It breaks the layout snapshot tests ([cli.test.ts:40-49](../../test/cli.test.ts)), touches install paths, and depends on an *unverified* Cursor skills directory (§3, Q2). Worth doing carefully in its own PR.
 4. **The two layers ship within one cycle.** "Enforcement first" is a *PR* ordering, not a release ordering. PR1→PR2→PR3 all land in Phase A; agents get both layers together.
 
 **Net:** skills are the primary integration; the enforcement primitives are the prerequisite. Build verbs (PR1–2), then teach them (PR3). The risk to manage is that enforcement without skills is *silently inert* for delegated workers — so PR3 must not slip.
@@ -65,14 +65,14 @@ But the **first PR** scope is the enforcement core, for four concrete reasons:
 
 ### 2.1 Verify command storage — **body `## Verify` block, not frontmatter** (decisive)
 
-The brief proposes `verify: [{ cmd: "bun run check-types" }]`. Empirical test against [markdown.ts](../src/markdown.ts):
+The brief proposes `verify: [{ cmd: "bun run check-types" }]`. Empirical test against [markdown.ts](../../src/markdown.ts):
 
 ```
 input  meta.verify = [{ cmd: "bun run check-types" }, { cmd: "bun test" }]
 output verify: ["[object Object]", "[object Object]"]        ← objects destroyed
 ```
 
-`formatValue` ([markdown.ts:83](../src/markdown.ts)) does `JSON.stringify(String(item))` per element; objects become `"[object Object]"`. **Object arrays are impossible** without rewriting the parser.
+`formatValue` ([markdown.ts:83](../../src/markdown.ts)) does `JSON.stringify(String(item))` per element; objects become `"[object Object]"`. **Object arrays are impossible** without rewriting the parser.
 
 String arrays round-trip, but commas break them:
 
@@ -94,7 +94,7 @@ turbo run test --filter=@questpie/admin,@questpie/framework
 ```
 ````
 
-This mirrors the existing `## Acceptance Criteria` body-parse pattern (`hasUncheckedCriteria`, [tasks.ts:247](../src/tasks.ts)), is immune to commas/quotes/objects, is human-editable, and co-locates with `## Evidence`. **No verify block, or an empty one, = zero commands = today's behavior** (AC-only gate). The default task template ships the heading with a comment and no fence, so fresh tasks parse to zero commands and the gate stays dormant until someone fills it in.
+This mirrors the existing `## Acceptance Criteria` body-parse pattern (`hasUncheckedCriteria`, [tasks.ts:247](../../src/tasks.ts)), is immune to commas/quotes/objects, is human-editable, and co-locates with `## Evidence`. **No verify block, or an empty one, = zero commands = today's behavior** (AC-only gate). The default task template ships the heading with a comment and no fence, so fresh tasks parse to zero commands and the gate stays dormant until someone fills it in.
 
 Machine-readable **pass-state** goes in frontmatter as scalars (safe): `verified` (ISO timestamp of last all-pass) and `verified_sha` (HEAD at verify time, for P1 freshness checks).
 
@@ -141,7 +141,7 @@ export async function runVerify(repoPath: string, cmds: string[]): Promise<Verif
 
 ### 2.4 Done gate — additive, dormant by default
 
-`setTaskStatus(..., "done", ...)` ([tasks.ts:120](../src/tasks.ts)) gains a verify check layered on the existing AC check:
+`setTaskStatus(..., "done", ...)` ([tasks.ts:120](../../src/tasks.ts)) gains a verify check layered on the existing AC check:
 
 ```
 if status == done and not force:
@@ -153,12 +153,12 @@ if status == done and not force:
 
 ### 2.5 Evidence format — markdown in the task body (Q9)
 
-Evidence lives in a `## Evidence` section of the task file, appended via the existing `appendSection` helper ([tasks.ts:252](../src/tasks.ts)). Rationale: one auditable source of truth, survives manual edits, matches existing patterns, no `evidence.json` to keep in sync. Heavy logs (full verify stdout, git diff-stat) still go under `runs/<id>/` so the task file stays scannable.
+Evidence lives in a `## Evidence` section of the task file, appended via the existing `appendSection` helper ([tasks.ts:252](../../src/tasks.ts)). Rationale: one auditable source of truth, survives manual edits, matches existing patterns, no `evidence.json` to keep in sync. Heavy logs (full verify stdout, git diff-stat) still go under `runs/<id>/` so the task file stays scannable.
 
 ### 2.6 Backward compatibility (Q11)
 
-- New `TaskMeta` fields (`branch`, `verified`, `verified_sha`) default to `""` in `normalizeTaskMeta` ([tasks.ts:215](../src/tasks.ts)); old task files load unchanged.
-- Fields added to `TASK_ORDER` ([tasks.ts:9](../src/tasks.ts)) for stable placement; lazily written on next save (additive, non-destructive).
+- New `TaskMeta` fields (`branch`, `verified`, `verified_sha`) default to `""` in `normalizeTaskMeta` ([tasks.ts:215](../../src/tasks.ts)); old task files load unchanged.
+- Fields added to `TASK_ORDER` ([tasks.ts:9](../../src/tasks.ts)) for stable placement; lazily written on next save (additive, non-destructive).
 - Verify and git gates are **inert unless configured** (no `## Verify` block / non-git repo). No data migration; the existing `migrate` command is untouched.
 
 ---
@@ -177,11 +177,11 @@ PR1 is specified in detail in §5.
 
 ### Phase B — P1 orchestration quality
 
-- Rich run summary + git snapshot artifacts in `runs/<id>/git/{head,branch,log,diff-stat}.txt` ([runner.ts:235](../src/runner.ts) rewrite).
+- Rich run summary + git snapshot artifacts in `runs/<id>/git/{head,branch,log,diff-stat}.txt` ([runner.ts:235](../../src/runner.ts) rewrite).
 - Verify **freshness**: compare `verified_sha` to current HEAD at `done`; warn/block on stale (commits since verify) unless `--allow-stale`.
 - Task templates (`--template fix|spike|research`) + size hint; `agent-board lint-tasks` warns on L-sized tasks with no children.
 - `status --oneline`; `project link --related` CLI for `related_projects`.
-- Mode injection: `renderStepGuidance` ([workflow.ts:343](../src/workflow.ts)) emits `Mode: worker|orchestrator` + forbidden actions.
+- Mode injection: `renderStepGuidance` ([workflow.ts:343](../../src/workflow.ts)) emits `Mode: worker|orchestrator` + forbidden actions.
 
 ### Phase C — P2 platform (backlog)
 
@@ -194,7 +194,7 @@ MCP server, `HANDOFF.md` goal snapshot, `sprint:` field + filter, shell completi
 **Skills (primary integration):**
 
 1. **One skill vs split?** **Split** — `agent-board` (orchestrator, default), `agent-board-worker`, `agent-board-research`. The session failed precisely because workers loaded the orchestrator skill that says "do not implement." Trigger precision beats monolith convenience. Maintenance stays low because shared depth lives in `references/` generated from `src/skills.ts` constants. Each `SKILL.md` < 200 lines.
-2. **Cursor path: global vs project vs both?** **Both, global primary.** ✅ **Verified** against [cursor.com/docs/skills](https://cursor.com/docs/skills): Cursor auto-discovers skills from `~/.cursor/skills/` **and `~/.agents/skills/`** (global) plus `.cursor/skills/` and `.agents/skills/` (project, recursive). The brief's `~/.cursor/skills-cursor` is **wrong**. Crucially, agent-board *already* links `~/.agents/skills/agent-board` ([workspace.ts:190](../src/workspace.ts)) — so Cursor global discovery likely already works today; the session failure was more about content (orchestrator-only, no worker split) than path. PR3 adds an explicit `~/.cursor/skills/agent-board` symlink (belt-and-suspenders) and `init --cursor-skills` for project `.cursor/skills/`. There is **no separate `triggers` frontmatter field** — Cursor (like Claude Code) uses `description` for relevance, so trigger keywords go *in* the description.
+2. **Cursor path: global vs project vs both?** **Both, global primary.** ✅ **Verified** against [cursor.com/docs/skills](https://cursor.com/docs/skills): Cursor auto-discovers skills from `~/.cursor/skills/` **and `~/.agents/skills/`** (global) plus `.cursor/skills/` and `.agents/skills/` (project, recursive). The brief's `~/.cursor/skills-cursor` is **wrong**. Crucially, agent-board *already* links `~/.agents/skills/agent-board` ([workspace.ts:190](../../src/workspace.ts)) — so Cursor global discovery likely already works today; the session failure was more about content (orchestrator-only, no worker split) than path. PR3 adds an explicit `~/.cursor/skills/agent-board` symlink (belt-and-suspenders) and `init --cursor-skills` for project `.cursor/skills/`. There is **no separate `triggers` frontmatter field** — Cursor (like Claude Code) uses `description` for relevance, so trigger keywords go *in* the description.
 3. **Require a skill id on `run`?** **Validate + warn by default; hard-fail only opt-in** (`--strict-skills` or workflow `require_skills: true`). Warning when a step references an unknown/uninstalled skill nudges correctness without breaking existing workflows.
 4. **Export → Cursor/Claude mapping?** A single self-contained markdown block (§2 PR2): Mode, Task (+branch), mandatory sequence, AC, Verify, linked specs, project/goal knowledge, `repo:AGENTS.md`, git rules. For Cursor it is the Task-tool prompt body; for Claude Code it pipes as the `-p` initial prompt. Must require no external file reads to start.
 5. **Skill length vs references?** **Short `SKILL.md` (<200 lines) + `references/` for depth.** Triggers and the mandatory worker sequence must be *in* `SKILL.md` (agents act on what is loaded); rationale and recipes go in references.
@@ -368,10 +368,10 @@ agent-board is file-based, so concurrent agents are safe only where state is par
 
 ### Guarantees added in v0.2.1
 
-1. **Atomic writes** — every board write is temp-file + `rename`, so a concurrent reader (`plan --related` across projects) never sees a torn/partial file. ([utils.ts](../src/utils.ts) `atomicWrite`)
-2. **Atomic claim** — `claim` takes an `O_EXCL` lock on `<task>.md.lock`; two agents racing the same task → exactly one claims, the other is told to retry. Stale locks (>30s) are reclaimed. ([tasks.ts](../src/tasks.ts) `withTaskLock`)
-3. **Unique run ids** — `runId` carries a random suffix, so parallel runs of the same task+workflow can't collide on the run folder. ([runner.ts](../src/runner.ts))
-4. **Per-agent repo via `AGENT_BOARD_REPO`** — git guards and verify run in this path instead of `project.repo_path`, so each agent can point at its own git worktree. ([workspace.ts](../src/workspace.ts) `resolveWorkspace`)
+1. **Atomic writes** — every board write is temp-file + `rename`, so a concurrent reader (`plan --related` across projects) never sees a torn/partial file. ([utils.ts](../../src/utils.ts) `atomicWrite`)
+2. **Atomic claim** — `claim` takes an `O_EXCL` lock on `<task>.md.lock`; two agents racing the same task → exactly one claims, the other is told to retry. Stale locks (>30s) are reclaimed. ([tasks.ts](../../src/tasks.ts) `withTaskLock`)
+3. **Unique run ids** — `runId` carries a random suffix, so parallel runs of the same task+workflow can't collide on the run folder. ([runner.ts](../../src/runner.ts))
+4. **Per-agent repo via `AGENT_BOARD_REPO`** — git guards and verify run in this path instead of `project.repo_path`, so each agent can point at its own git worktree. ([workspace.ts](../../src/workspace.ts) `resolveWorkspace`)
 
 ### Recommended setup per scenario
 

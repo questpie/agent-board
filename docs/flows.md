@@ -4,6 +4,16 @@
 
 The CLI is not meant to be a human workflow builder. Humans can speak naturally; the controller agent uses `flow new`, edits the script, summarizes the phases, and runs it after approval or explicit go-ahead.
 
+## Prerequisites
+
+Flows call no model API directly and need no API keys. Each `agent(...)` spawns a locally installed coding agent over the Agent Client Protocol via [spawn-agent](https://www.npmjs.com/package/spawn-agent), reusing that agent's own auth:
+
+- `--runtime codex` (default): the Codex CLI must be installed and logged in. agent-board prefers the bundled native `codex-acp` binary when it resolves (override with `AGENT_BOARD_CODEX_ACP_BIN`); authentication still comes from your local Codex login.
+- `--runtime claude`: Claude Code must be installed and logged in.
+- `--runtime opencode`: OpenCode must be installed and logged in.
+
+`AGENT_BOARD_FLOW_MOCK=1` short-circuits agent spawning with deterministic mock output — useful for exercising a flow script end to end without spending tokens (the test suite runs flows this way).
+
 ## Commands
 
 ```sh

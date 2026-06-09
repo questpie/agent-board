@@ -13,7 +13,7 @@ The CLI is the write boundary.
 
 ```txt
 agent/controller/worker
-  -> agent-board subcommand
+  -> agent-board <subcommand>
     -> StoreDriver
       -> filesystem | Linear API | files-sdk/R2/S3 | database | custom API
 ```
