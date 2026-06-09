@@ -2,9 +2,20 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 import { createRoot } from "react-dom/client";
 import htm from "htm";
 import { marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import hljs from "highlight.js";
 
 const html = htm.bind(createElement);
 marked.setOptions({ gfm: true, breaks: false });
+marked.use(
+	markedHighlight({
+		langPrefix: "hljs language-",
+		highlight(code, lang) {
+			const language = lang && hljs.getLanguage(lang) ? lang : "plaintext";
+			return hljs.highlight(code, { language }).value;
+		},
+	}),
+);
 
 const STATUS_ORDER = ["todo", "ready", "in_progress", "blocked", "review", "done"];
 

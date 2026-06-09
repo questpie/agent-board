@@ -45,6 +45,15 @@
 	--st-blocked: #ff5f6d;
 	--st-review: #22c55e;
 	--st-done: #818cf8;
+
+	/* Syntax tokens (DESIGN.md §11). */
+	--syntax-string: #7ddf9e;
+	--syntax-function: #8fc8ff;
+	--syntax-number: #f2ca72;
+	--syntax-keyword: #c79bff;
+	--syntax-type: #aeb8ff;
+	--syntax-comment: #737373;
+	--syntax-punctuation: #a0a0a0;
 }
 
 * {
@@ -684,6 +693,72 @@ select.control:focus {
 	padding: 0;
 	font-size: 12.5px;
 	color: var(--foreground);
+}
+
+/* Syntax highlighting (highlight.js classes mapped to DESIGN.md §11 tokens). */
+.hljs {
+	color: var(--foreground);
+	background: transparent;
+}
+.hljs-keyword,
+.hljs-built_in,
+.hljs-literal,
+.hljs-selector-tag {
+	color: var(--syntax-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-char.escape_,
+.hljs-template-tag {
+	color: var(--syntax-string);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section {
+	color: var(--syntax-function);
+}
+.hljs-number {
+	color: var(--syntax-number);
+}
+.hljs-type,
+.hljs-title.class_,
+.hljs-class .hljs-title,
+.hljs-variable.language_,
+.hljs-attr {
+	color: var(--syntax-type);
+}
+.hljs-comment,
+.hljs-quote {
+	color: var(--syntax-comment);
+	font-style: italic;
+}
+.hljs-property,
+.hljs-variable,
+.hljs-params,
+.hljs-template-variable {
+	color: var(--foreground);
+}
+.hljs-punctuation,
+.hljs-operator {
+	color: var(--syntax-punctuation);
+}
+.hljs-meta {
+	color: var(--syntax-comment);
+}
+.hljs-name,
+.hljs-tag {
+	color: var(--syntax-function);
+}
+.hljs-attribute,
+.hljs-symbol,
+.hljs-bullet {
+	color: var(--syntax-keyword);
+}
+.hljs-emphasis {
+	font-style: italic;
+}
+.hljs-strong {
+	font-weight: 600;
 }
 .markdown blockquote {
 	margin: 0.8em 0;

@@ -32,6 +32,7 @@ describe("cli", () => {
 		).toEqual([
 			"config.md",
 			"flow-orchestration.md",
+			"organization.md",
 			"pm-orchestrator.md",
 			"research-workflow.md",
 			"review-workflow.md",

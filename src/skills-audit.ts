@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import {
 	configSkillReadme,
 	flowOrchestrationSkillReadme,
+	organizationReference,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
 	researchSkillReadme,
@@ -35,6 +36,7 @@ const SKILL_DOCS: ReadonlyArray<{ source: string; text: string }> = [
 	{ source: "agent-board-research/SKILL.md", text: researchSkillReadme },
 	{ source: "agent-board-research/AGENTS.md", text: researchSkillAgents },
 	{ source: "references/config.md", text: configSkillReadme },
+	{ source: "references/organization.md", text: organizationReference },
 	{ source: "references/task-workflow.md", text: taskWorkflowReference },
 	{ source: "references/pm-orchestrator.md", text: pmOrchestratorSkillReadme },
 	{ source: "references/flow-orchestration.md", text: flowOrchestrationSkillReadme },

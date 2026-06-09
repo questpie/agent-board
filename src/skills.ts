@@ -1,6 +1,6 @@
 export const skillReadme = `---
 name: agent-board
-description: "Orchestrate and plan work with agent-board: goals, specs, task graphs, dependencies, flows, sprints, and delegating tasks to workers. Use when planning whole features, breaking work into goals/tasks/subtasks, running multi-agent flow fan-out/review/synthesis, or reviewing task state. Orchestrator mode by default — delegate implementation to a worker that follows the agent-board-worker skill. Triggers: agent-board, flow, sprint, plan, goal, delegate, multitask, orchestrate, task board, backlog."
+description: "Orchestrate and plan work with agent-board: goals, specs, task graphs, dependencies, flows, sprints, and delegating tasks to workers. Use when planning whole features, breaking work into goals/tasks/subtasks, running multi-agent flow fan-out/review/synthesis, or reviewing task state. Orchestrator mode by default — delegate implementation to a worker that follows the agent-board-worker skill. Triggers: agent-board, flow, sprint, plan, goal, delegate, multitask, orchestrate, organize, naming conventions, tidy board, task board, backlog."
 ---
 
 # Agent Board
@@ -39,6 +39,7 @@ Use when controlling agent-board work: goals, specs, task graph, delegation, flo
 
 ## References
 
+- \`references/organization.md\` - naming and structure conventions: numbered phase goals, verb-object tasks, noun-phrase specs, categorized knowledge. Read this when asked to organize, tidy, or rename a board.
 - \`references/pm-orchestrator.md\` - PM loop, task breakdown, blockers, parallelization.
 - \`references/flow-orchestration.md\` - controller loop, fan-out, cross-agent reviews, synthesis, and staged execution.
 - \`references/task-workflow.md\` - worker lifecycle for picking up and closing tasks.
@@ -56,6 +57,7 @@ export const skillAgents = `# Agent Board Rules
 - Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, summarize phases, then \`flow run\` after approval or explicit go-ahead.
 - Read flow \`summary.md\` before per-agent outputs; open \`diagnostics.jsonl\` only for runtime debugging.
 - Keep task Markdown concise; logs stay in flow/run folders.
+- Organizing or naming: goals are numbered phases (\`NN-slug\`), tasks are \`verb-object\`, specs are noun phrases, knowledge is kind + category. See references/organization.md.
 `;
 
 export const workerSkillReadme = `---
@@ -351,4 +353,65 @@ Review prevents false completion. Find concrete bugs, missing tests, regressions
 - Keep review notes concise and actionable.
 
 If no actionable issues, say so and note residual risk or checks not run.
+`;
+
+export const organizationReference = `# Organization & Naming
+
+Use this reference when the user asks to organize, tidy, restructure, or name a board cleanly: "organize this", "set up phases", "name these properly", "clean up the backlog". A tidy board reads like a roadmap, top to bottom. Names are the index: make them sort, scan, and group on their own.
+
+## Goals are numbered phases
+
+A goal is one shippable phase of the roadmap. Name the slug \`NN-short-slug\` so goals sort in execution order, and keep the title human.
+
+- \`agent-board goal new "Phase 2: Core API" --id 02-core-api\`
+- Phases read in order: \`01-foundation\`, \`02-core-api\`, \`03-admin-ui\`, \`04-hardening\`.
+- Reserve \`00-\` for always-on lanes like \`00-backlog\` or \`00-meta\`.
+- Keep three to seven active goals. One goal is one phase, not a catch-all.
+
+## Tasks are verb-first units of work
+
+A task is one reviewable, PR-sized change. The slug is \`verb-object\`; ordering lives in the dependency graph, never in the name.
+
+- Slugs: \`add-user-auth\`, \`fix-login-redirect\`, \`wire-stripe-webhook\`, \`remove-legacy-config\`.
+- Use a small, steady verb set: add, fix, refactor, remove, wire, migrate, test, document.
+- If a title needs the word "and", split it into linked tasks.
+- Order with \`agent-board link <from> --blocks <to>\`, not number prefixes.
+- Urgency is \`--priority\`; state is status. Do not bake either into the slug.
+- Create: \`agent-board new "Add user auth" --status ready --priority high\`.
+
+## Specs are noun phrases
+
+A spec holds the why and the acceptance criteria. The slug is a noun phrase, and a category groups it.
+
+- Slugs: \`auth-architecture\`, \`rate-limiting-design\`, \`pricing-model\`.
+- \`agent-board spec new "Auth architecture" --category architecture\`.
+- Attach context with \`agent-board link <task> --spec <spec>\`.
+
+## Knowledge is decision, note, or gotcha
+
+Pick the kind, then a tight title that states the fact itself.
+
+- decision: name the decision, e.g. "Use Bun as the runtime".
+- gotcha: name the trap, e.g. "Codex flows need codex-acp on macOS".
+- note: a reusable fact worth keeping.
+- \`agent-board knowledge add "Use Bun as the runtime" --kind decision --category tooling\`.
+
+## Categories are one shared taxonomy
+
+Reuse a small vocabulary across specs and knowledge so the board and the web viewer filter cleanly. Use a single lowercase or kebab-case word: \`architecture\`, \`api\`, \`ui\`, \`ops\`, \`tooling\`, \`product\`. Do not invent a new category per item. Fix drift with \`agent-board spec categorize <id> <category>\` or \`agent-board knowledge categorize <id> <category>\`.
+
+## Scope picks the smallest home
+
+- goal scope: only this phase needs it.
+- project scope: shared across phases.
+- global scope: shared across repos.
+
+## "Organize this board" checklist
+
+1. Renumber goals into \`NN-slug\` phases; merge overlap and split catch-all goals.
+2. Rename tasks to \`verb-object\`; split any "X and Y"; move urgency to \`--priority\` and state to status.
+3. Make every ordering explicit with \`agent-board link <from> --blocks <to>\`; the graph is the order.
+4. Give specs noun-phrase slugs and a category, and link each task to its spec.
+5. Tag knowledge with a kind and a category from the shared taxonomy.
+6. Confirm with \`agent-board status\` and \`agent-board plan\` that phases read in order.
 `;

@@ -8,6 +8,7 @@ import { gitRoot } from "./git.js";
 import {
 	configSkillReadme,
 	flowOrchestrationSkillReadme,
+	organizationReference,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
 	researchSkillReadme,
@@ -504,6 +505,7 @@ async function installBundledSkills(root: string): Promise<void> {
 	await writeBundledSkill(join(skillRoot, "SKILL.md"), skillReadme);
 	await writeBundledSkill(join(skillRoot, "AGENTS.md"), skillAgents);
 	await writeBundledSkill(join(skillRoot, "references", "config.md"), configSkillReadme);
+	await writeBundledSkill(join(skillRoot, "references", "organization.md"), organizationReference);
 	await writeBundledSkill(join(skillRoot, "references", "flow-orchestration.md"), flowOrchestrationSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "pm-orchestrator.md"), pmOrchestratorSkillReadme);
 	await writeBundledSkill(join(skillRoot, "references", "task-workflow.md"), taskWorkflowReference);
