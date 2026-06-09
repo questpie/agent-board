@@ -24,6 +24,12 @@
 		"agent-board": "./src/index.ts",
 		"agent": "./src/index.ts"
 	},
+	"files": [
+		"src"
+	],
+	"engines": {
+		"bun": ">=1.2.0"
+	},
 	"scripts": {
 		"check-types": "tsc --noEmit",
 		"test": "bun test"

@@ -16,6 +16,17 @@ Long-running agent work fails when the plan lives only in chat. `agent-board` ke
 
 The CLI enforces the parts prose cannot: claim locking, detached-HEAD guards, dependency checks, verify evidence, and done gates.
 
+## Install
+
+agent-board runs on [Bun](https://bun.sh) (the CLI ships as TypeScript, no build step):
+
+```sh
+bun add -g agent-board
+agent-board skills install
+```
+
+`npm i -g agent-board` works too, as long as Bun is on your PATH.
+
 ## Install From Source
 
 ```sh
