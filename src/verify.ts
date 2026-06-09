@@ -51,13 +51,33 @@ export async function runVerify(
 			new Promise<number>((res) => {
 				timer = setTimeout(() => {
 					timedOut = true;
-					proc.kill();
+					// SIGKILL, not SIGTERM: the command is past its budget and the
+					// timeout must not be defeatable by a signal handler.
+					proc.kill(9);
 					res(124);
 				}, timeoutMs);
 			}),
 		]);
 		if (timer) clearTimeout(timer);
-		const [stdout, stderr] = await Promise.all([stdoutText, stderrText]);
+		// A killed sh can leave descendants holding the pipes open, and stream
+		// EOF never arrives. Bound the drain so evidence collection cannot hang
+		// past the timeout it just enforced; the recorded line says "timed out",
+		// losing the partial output is acceptable.
+		const drain = Promise.all([stdoutText, stderrText]);
+		let drained: [string, string] | null;
+		if (timedOut) {
+			let graceTimer: ReturnType<typeof setTimeout> | undefined;
+			drained = await Promise.race([
+				drain,
+				new Promise<null>((res) => {
+					graceTimer = setTimeout(() => res(null), 1_000);
+				}),
+			]);
+			if (graceTimer) clearTimeout(graceTimer);
+		} else {
+			drained = await drain;
+		}
+		const [stdout, stderr] = drained ?? ["", ""];
 		const captured = (stdout + stderr).slice(-4000);
 		const output = timedOut
 			? `${captured}\ntimed out after ${Math.round(timeoutMs / 1000)}s`.slice(-4000)
