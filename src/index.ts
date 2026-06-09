@@ -3,36 +3,43 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
-import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, writeKnowledgeBody, writeSpecBody } from "./documents.js";
+import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, setKnowledgeCategory, setSpecCategory, writeKnowledgeBody, writeSpecBody } from "./documents.js";
 import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
-import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
+import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, relocateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
-import type { TaskFile, Workspace } from "./types.js";
+import { auditSkillDrift } from "./skills-audit.js";
+import { applyNudge, nudgeStatus } from "./nudge.js";
+import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
+import { startWebServer } from "./web.js";
 
 const program = new Command();
 
 program
 	.name("agent-board")
 	.description("Markdown task board and execution contract for coding agents")
-	.version("0.3.0")
+	.version("0.4.0")
 	.allowUnknownOption(true);
 
 program
 	.command("init")
 	.description("Initialize an agent-board project binding for this repo")
 	.option("--project <slug>", "Project slug")
+	.option("--local", "Store the board in the repo (.agent-board/, git-versioned)")
+	.option("--global", "Store the board in home (~/.agent-board), shared across repos [default]")
 	.action(async (options) => {
 		await main(async () => {
-			const opts = readOptions<{ project?: string }>(options);
-			const { workspace, warnings } = await initWorkspace(process.cwd(), opts.project);
-			console.log(`Initialized ${workspace.projectSlug}`);
-			console.log(`Project: ${workspace.projectPath}`);
+			const opts = readOptions<{ project?: string; local?: boolean; global?: boolean }>(options);
+			const mode = resolveInitMode(opts);
+			const { workspace, warnings } = await initWorkspace(process.cwd(), { projectSlug: opts.project, mode });
+			console.log(`Initialized ${workspace.projectSlug} (${workspace.mode})`);
+			console.log(`Board: ${workspace.projectPath}`);
 			console.log(`Goal: ${workspace.goalSlug}`);
 			console.log(`Repo: ${workspace.repoPath}`);
 			for (const warning of warnings) console.warn(`Warning: ${warning}`);
+			await maybeNudgeHint();
 		});
 	});
 
@@ -46,6 +53,48 @@ program
 			const { workspace, migrated } = await migrateWorkspace(process.cwd(), opts.project);
 			console.log(`Migrated ${workspace.projectSlug}`);
 			console.log(migrated.length ? `Moved: ${migrated.join(", ")}` : "Nothing to migrate.");
+		});
+	});
+
+program
+	.command("relocate")
+	.description("Move the board between home (~/.agent-board) and the repo (.agent-board/)")
+	.requiredOption("--to <where>", "Destination: 'local' (in repo) or 'home' (shared)")
+	.option("--cleanup", "Delete the source copy after moving (default: keep it as a backup)")
+	.option("--project <slug>", "Project slug to relocate (home source)")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ to: string; cleanup?: boolean; project?: string }>(options);
+			const to: WorkspaceMode | null =
+				opts.to === "local" ? "local" : opts.to === "home" ? "home" : null;
+			if (!to) throw new Error("--to must be 'local' or 'home'");
+			const result = await relocateWorkspace(process.cwd(), {
+				to,
+				cleanup: opts.cleanup ?? false,
+				projectSlug: opts.project,
+			});
+			console.log(`Relocated ${result.slug} -> ${result.to}`);
+			console.log(`From: ${result.from}`);
+			console.log(`To:   ${result.target}`);
+			console.log(result.copied.length ? `Copied: ${result.copied.join(", ")}` : "Copied: nothing");
+			if (result.cleaned) console.log("Source removed.");
+			else if (result.backup) console.log(`Backup kept: ${result.backup} (re-run with --cleanup to remove)`);
+			if (result.to === "local") {
+				console.log("Next: commit .agent-board/ with the repo — other clones pick it up automatically, no env needed.");
+			}
+		});
+	});
+
+program
+	.command("nudge")
+	.description("Add or refresh the agent-board usage nudge in CLAUDE.md and AGENTS.md")
+	.option("--remove", "Remove the managed nudge block instead of adding it")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ remove?: boolean }>(options);
+			const { root, results } = await applyNudge(process.cwd(), { remove: opts.remove ?? false });
+			console.log(`Nudge target: ${root}`);
+			for (const result of results) console.log(`  ${result.file}: ${result.action}`);
 		});
 	});
 
@@ -169,6 +218,7 @@ program
 			if (active.length) console.log(`\nIn progress:\n${active.map((task) => `- ${task.meta.id}: ${task.meta.title}`).join("\n")}`);
 			if (blocked.length) console.log(`\nBlocked:\n${blocked.map((task) => `- ${task.meta.id}: ${task.meta.blocked_by.at(-1) ?? task.meta.title}`).join("\n")}`);
 			if (next) console.log(`\nNext: ${next.meta.id} (${next.meta.priority}) ${next.meta.title}`);
+			await maybeNudgeHint();
 		});
 	});
 
@@ -253,12 +303,13 @@ spec
 	.command("new")
 	.argument("<title>")
 	.option("--scope <scope>", "global, project, or goal", "project")
+	.option("--category <name>", "Group the spec under a category")
 	.description("Create a spec")
 	.action(async (title, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = parseScope(options.scope);
-			const doc = await createSpec(workspace, title, scope);
+			const doc = await createSpec(workspace, title, scope, options.category);
 			console.log(`Created spec ${scope}/${doc.meta.id}`);
 		});
 	});
@@ -266,27 +317,44 @@ spec
 spec
 	.command("list")
 	.option("--scope <scope>", "global, project, or goal")
+	.option("--category <name>", "Filter by category")
 	.description("List specs")
 	.action(async (options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = options.scope ? parseScope(options.scope) : undefined;
-			const specs = await listSpecs(workspace, scope);
+			const specs = (await listSpecs(workspace, scope)).filter(
+				(doc) => !options.category || doc.meta.category === options.category,
+			);
 			if (specs.length === 0) {
 				console.log("No specs.");
 				return;
 			}
 			console.log(
 				table([
-					["Scope", "ID", "Status", "Title"],
+					["Scope", "ID", "Category", "Status", "Title"],
 					...specs.map((doc) => [
 						doc.scope,
 						doc.meta.id,
+						doc.meta.category ?? "-",
 						doc.meta.status ?? "-",
 						doc.meta.title,
 					]),
 				]),
 			);
+		});
+	});
+
+spec
+	.command("categorize")
+	.argument("<spec-id>")
+	.argument("<category>")
+	.description("Set or change a spec category")
+	.action(async (id, category) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await setSpecCategory(workspace, id, category);
+			console.log(`Categorized spec ${doc.scope}/${doc.meta.id} -> ${doc.meta.category ?? "(none)"}`);
 		});
 	});
 
@@ -337,12 +405,13 @@ knowledge
 	.argument("<title>")
 	.option("--kind <kind>", "Knowledge kind: decision, note, gotcha", "note")
 	.option("--scope <scope>", "global, project, or goal", "project")
+	.option("--category <name>", "Group the note under a category")
 	.description("Add a knowledge note")
 	.action(async (title, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = parseScope(options.scope);
-			const doc = await createKnowledge(workspace, title, options.kind, scope);
+			const doc = await createKnowledge(workspace, title, options.kind, scope, options.category);
 			console.log(`Created knowledge ${scope}/${doc.meta.id}`);
 		});
 	});
@@ -350,27 +419,44 @@ knowledge
 knowledge
 	.command("list")
 	.option("--scope <scope>", "global, project, or goal")
+	.option("--category <name>", "Filter by category")
 	.description("List knowledge notes")
 	.action(async (options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = options.scope ? parseScope(options.scope) : undefined;
-			const docs = await listKnowledge(workspace, scope);
+			const docs = (await listKnowledge(workspace, scope)).filter(
+				(doc) => !options.category || doc.meta.category === options.category,
+			);
 			if (docs.length === 0) {
 				console.log("No knowledge.");
 				return;
 			}
 			console.log(
 				table([
-					["Scope", "ID", "Kind", "Title"],
+					["Scope", "ID", "Kind", "Category", "Title"],
 					...docs.map((doc) => [
 						doc.scope,
 						doc.meta.id,
 						doc.meta.kind ?? "note",
+						doc.meta.category ?? "-",
 						doc.meta.title,
 					]),
 				]),
 			);
+		});
+	});
+
+knowledge
+	.command("categorize")
+	.argument("<knowledge-id>")
+	.argument("<category>")
+	.description("Set or change a knowledge category")
+	.action(async (id, category) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await setKnowledgeCategory(workspace, id, category);
+			console.log(`Categorized knowledge ${doc.scope}/${doc.meta.id} -> ${doc.meta.category ?? "(none)"}`);
 		});
 	});
 
@@ -766,6 +852,40 @@ skills
 		});
 	});
 
+skills
+	.command("check")
+	.description("Check that bundled skill docs still match the live CLI (drift guard)")
+	.action(async () => {
+		await main(async () => {
+			const issues = auditSkillDrift(program);
+			if (issues.length === 0) {
+				console.log("No drift: skill docs match the CLI.");
+				return;
+			}
+			for (const issue of issues) {
+				console.error(`[${issue.source}] ${issue.kind}: ${issue.token}  (in "${issue.invocation}")`);
+			}
+			throw new Error(`Found ${issues.length} skill/CLI drift issue(s). Update the docs in src/skills.ts.`);
+		});
+	});
+
+program
+	.command("web")
+	.description("Start a local read-only web viewer for the board")
+	.option("--port <n>", "Port to listen on", "4317")
+	.option("--host <host>", "Host to bind", "127.0.0.1")
+	.option("--no-open", "Do not open the browser automatically")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ port: string; host: string; open: boolean }>(options);
+			await startWebServer({
+				port: parsePositiveInt(opts.port, "--port"),
+				host: opts.host,
+				open: opts.open !== false,
+			});
+		});
+	});
+
 function currentWorkspace(): Workspace {
 	const options = cliScopeOverrides();
 	return resolveWorkspace(process.cwd(), {
@@ -823,6 +943,38 @@ function readOptions<T extends Record<string, unknown>>(value: T | { opts(): T }
 	return typeof (value as { opts?: unknown }).opts === "function"
 		? (value as { opts(): T }).opts()
 		: value as T;
+}
+
+function resolveInitMode(opts: { local?: boolean; global?: boolean }): WorkspaceMode {
+	if (opts.local && opts.global) throw new Error("Use either --local or --global, not both.");
+	if (opts.local) return "local";
+	if (opts.global) return "home";
+	// Interactive humans get to choose; non-interactive callers (agents, CI)
+	// default to the shared home board to preserve existing behavior.
+	if (process.stdin.isTTY && typeof prompt === "function") {
+		const answer = prompt(
+			"Where should this board live? [1] this repo (.agent-board, git-versioned)  [2] home (~/.agent-board) [default]:",
+		);
+		if (answer?.trim() === "1") return "local";
+	}
+	return "home";
+}
+
+// Non-fatal hint: when running inside a repo whose CLAUDE.md/AGENTS.md don't
+// mention agent-board, tell the agent to run `agent-board nudge`. We never write
+// the files automatically — the agent does, after seeing this.
+async function maybeNudgeHint(): Promise<void> {
+	try {
+		const status = await nudgeStatus(process.cwd());
+		if (!status.isRepo || status.missing.length === 0) return;
+		const files = status.missing.join(" and ");
+		const verb = status.missing.length > 1 ? "don't" : "doesn't";
+		console.error(
+			`Tip: ${files} ${verb} mention agent-board — run \`agent-board nudge\` so agents use the board for tasks, specs, and knowledge.`,
+		);
+	} catch {
+		// A hint must never break the command.
+	}
 }
 
 async function readInputSource(source: string): Promise<string> {

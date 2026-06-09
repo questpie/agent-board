@@ -23,6 +23,14 @@ async function git(
 	return { code, out: out.trim() };
 }
 
+// Absolute path to the repo root containing cwd, or null when cwd is not in a
+// git work tree. Lets `init --local` anchor the board at the repo root even when
+// run from a subdirectory.
+export async function gitRoot(cwd: string): Promise<string | null> {
+	const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
+	return top.code === 0 && top.out ? top.out : null;
+}
+
 export async function gitState(repoPath: string): Promise<GitState> {
 	const inside = await git(repoPath, ["rev-parse", "--is-inside-work-tree"]);
 	if (inside.code !== 0 || inside.out !== "true") {

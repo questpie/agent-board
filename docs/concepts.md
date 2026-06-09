@@ -1,6 +1,6 @@
 # Concepts
 
-`agent-board` stores local Markdown state under `~/.agent-board` by default. Override with `AGENT_BOARD_HOME` for tests or isolated workspaces.
+`agent-board` stores local Markdown state in one of two places: the shared **home** board at `~/.agent-board` (default; override with `AGENT_BOARD_HOME`), or a repo-local `.agent-board/` created with `agent-board init --local` and git-versioned with the project. Move between them with `agent-board relocate --to local|home`.
 
 ## Layout
 
@@ -27,11 +27,29 @@
       flows/runs/
 ```
 
-The registry maps repository paths to projects. From any subdirectory in a registered repo, the CLI resolves the project and active goal.
+A repo-local board (`init --local`) is flatter — a single project with no `projects/` wrapper and no registry:
+
+```txt
+<repo>/.agent-board/
+  project.json        # no stored repo_path; derived from location
+  .gitignore          # ignores transient flows/runs
+  specs/
+  knowledge/
+  flows/
+  goals/<goal>/
+    goal.md
+    status.md
+    tasks/
+    specs/
+    knowledge/
+    flows/runs/
+```
+
+Resolution precedence from the working directory: `AGENT_BOARD_HOME` (explicit) → a `.agent-board/` found by walking up (stopping at `$HOME`) → `~/.agent-board`. The home registry maps repository paths to projects; a local board needs no registry, since its location identifies the project.
 
 ## Project, Goal, Task
 
-**Project** is a registered repository path.
+**Project** is a repository's board — a registered path in home mode, or the repo containing a local `.agent-board/`.
 
 **Goal** is the active slice of work inside a project. Tasks belong to a goal.
 

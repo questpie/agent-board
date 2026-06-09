@@ -3,13 +3,25 @@
 ## Projects And Goals
 
 ```sh
-agent-board init [--project <slug>]
+agent-board init [--project <slug>] [--local | --global]
+agent-board relocate --to local|home [--cleanup] [--project <slug>]
+agent-board nudge [--remove]
 agent-board migrate [--project <slug>]
 agent-board projects
 agent-board goals
 agent-board goal new <title> [--id <slug>]
 agent-board goal use <id>
 ```
+
+`init` defaults to the shared home board (`~/.agent-board`); `--local` keeps the
+board in the repo (`.agent-board/`, git-versioned), discovered by walking up from
+the working directory. `relocate` moves an existing board between the two and, by
+default, leaves the source as a backup unless `--cleanup` is passed.
+
+`nudge` adds (or refreshes, or with `--remove` removes) a managed agent-board
+block in the repo's `CLAUDE.md` and `AGENTS.md`. The CLI never writes these files
+on its own — commands run inside a repo only print a tip when the block is
+missing, and you (or an agent) run `nudge` to apply it.
 
 Use environment or CLI overrides when concurrent agents must not depend on shared active goal state:
 
@@ -52,20 +64,24 @@ Important behavior:
 ## Specs And Knowledge
 
 ```sh
-agent-board spec new <title> [--scope global|project|goal]
-agent-board spec list [--scope global|project|goal]
+agent-board spec new <title> [--scope global|project|goal] [--category <name>]
+agent-board spec list [--scope global|project|goal] [--category <name>]
 agent-board spec show <spec-id>
 agent-board spec cat <spec-id>
 agent-board spec write <spec-id> --from <file|->
+agent-board spec categorize <spec-id> <category>
 
-agent-board knowledge add <title> [--kind decision|note|gotcha] [--scope global|project|goal]
-agent-board knowledge list [--scope global|project|goal]
+agent-board knowledge add <title> [--kind decision|note|gotcha] [--scope global|project|goal] [--category <name>]
+agent-board knowledge list [--scope global|project|goal] [--category <name>]
 agent-board knowledge cat <knowledge-id>
 agent-board knowledge write <knowledge-id> --from <file|->
+agent-board knowledge categorize <knowledge-id> <category>
 ```
 
 `cat` prints body content without frontmatter. `write` replaces body content
-while preserving CLI-owned metadata.
+while preserving CLI-owned metadata. `--category` groups specs and knowledge
+under a freeform label; `categorize` sets or changes it on an existing document,
+and `list --category <name>` filters by it.
 
 ## Flows
 
@@ -105,6 +121,7 @@ you need to pin a different ACP executable.
 ```sh
 agent-board skills install
 agent-board skills doctor
+agent-board skills check
 ```
 
-`skills install` writes bundled skills into `~/.agent-board/skills` and links them into supported runtime skill directories when safe.
+`skills install` writes bundled skills into `~/.agent-board/skills` and links them into supported runtime skill directories when safe. `skills check` audits the bundled skill docs against the live CLI and fails on any command/flag drift.
