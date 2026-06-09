@@ -3,7 +3,7 @@ import { copyFile, mkdir, readdir, readFile, rm, symlink } from "node:fs/promise
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace, WorkspaceMode } from "./types.js";
-import { atomicWrite, ensureDir, findLocalRoot, getHomeRoot, nowIso, projectSlugFromCwd, resolveRoot, slugify } from "./utils.js";
+import { atomicWrite, ensureDir, findLocalRoot, findWorktreeMainRoot, getHomeRoot, nowIso, projectSlugFromCwd, resolveRoot, slugify } from "./utils.js";
 import { gitRoot } from "./git.js";
 import {
 	configSkillReadme,
@@ -186,14 +186,23 @@ export function resolveWorkspace(
 	};
 }
 
-// AGENT_BOARD_REPO wins (worktree routing), then a stored repo_path (home
-// boards), else derive it: a local board sits at <repo>/.agent-board, so its
-// repo is the board's parent directory.
+// AGENT_BOARD_REPO wins (explicit worktree routing), then the canonical repo:
+// a stored repo_path for home boards, the board's parent dir for local boards.
+// When cwd sits in a linked worktree of that canonical repo, git operations
+// must target the worktree the agent actually works in, not the main checkout
+// another agent may occupy.
 function resolveRepoPath(project: ProjectConfig, mode: WorkspaceMode, root: string, cwd: string): string {
 	if (process.env.AGENT_BOARD_REPO) return resolve(process.env.AGENT_BOARD_REPO);
-	if (project.repo_path) return resolve(project.repo_path);
-	if (mode === "local") return dirname(root);
-	return resolve(cwd);
+	const canonical = project.repo_path
+		? resolve(project.repo_path)
+		: mode === "local"
+			? dirname(root)
+			: null;
+	if (!canonical) return resolve(cwd);
+	if (isInside(cwd, canonical)) return canonical;
+	const worktree = findWorktreeMainRoot(cwd);
+	if (worktree && isInside(worktree.mainRoot, canonical)) return worktree.worktreeRoot;
+	return canonical;
 }
 
 export async function listProjects(cwd = process.cwd()): Promise<RegistryProject[]> {
@@ -530,7 +539,9 @@ async function readProjectConfig(projectPath: string): Promise<ProjectConfig> {
 function readProjectConfigSync(projectPath: string): ProjectConfig {
 	const path = join(projectPath, "project.json");
 	if (!existsSync(path)) {
-		throw new Error("No agent-board project found. Run `agent-board init`.");
+		throw new Error(
+			`No agent-board project found: missing ${path}. Run \`agent-board init\` (or \`agent-board init --local\` for a repo board).`,
+		);
 	}
 	return JSON.parse(readFileSync(path, "utf-8")) as ProjectConfig;
 }
@@ -560,12 +571,35 @@ async function upsertRegistryProject(root: string, project: RegistryProject): Pr
 function resolveProjectSlug(root: string, cwd: string): string {
 	const registry = readRegistrySync(root);
 	const current = resolve(cwd);
-	const matches = Object.values(registry.projects)
-		.filter((project) => isInside(current, project.repo_path))
-		.sort((a, b) => b.repo_path.length - a.repo_path.length);
-	const slug = matches[0]?.slug;
-	if (!slug) throw new Error("No agent-board project found. Run `agent-board init`.");
+	const slug = matchProjectByPath(registry, current)
+		?? matchProjectByPath(registry, findWorktreeMainRoot(current)?.mainRoot);
+	if (!slug) throw projectNotFoundError(root, current, registry);
 	return slug;
+}
+
+function matchProjectByPath(registry: Registry, path: string | undefined): string | undefined {
+	if (!path) return undefined;
+	const matches = Object.values(registry.projects)
+		.filter((project) => isInside(path, project.repo_path))
+		.sort((a, b) => b.repo_path.length - a.repo_path.length);
+	return matches[0]?.slug;
+}
+
+// Resolution failed: say where we looked and how to route to an existing
+// project, instead of only suggesting `init` — which, run blindly from a
+// worktree or an unrelated directory, would register a duplicate project.
+function projectNotFoundError(root: string, cwd: string, registry: Registry): Error {
+	const known = Object.keys(registry.projects).sort();
+	const registryPath = join(root, "registry.json");
+	const lines = [
+		`No agent-board project found for ${cwd}.`,
+		known.length
+			? `Known projects in ${registryPath}: ${known.join(", ")}.`
+			: `No projects registered in ${registryPath} yet.`,
+		"If this directory belongs to a known project, pass --project <slug> or set AGENT_BOARD_PROJECT.",
+		"Otherwise run `agent-board init` to register it as a new project.",
+	];
+	return new Error(lines.join("\n"));
 }
 
 function isInside(path: string, parent: string): boolean {

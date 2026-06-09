@@ -45,7 +45,9 @@ A repo-local board (`init --local`) is flatter — a single project with no `pro
     flows/runs/
 ```
 
-Resolution precedence from the working directory: `AGENT_BOARD_HOME` (explicit) → a `.agent-board/` found by walking up (stopping at `$HOME`) → `~/.agent-board`. The home registry maps repository paths to projects; a local board needs no registry, since its location identifies the project.
+Resolution precedence from the working directory: `AGENT_BOARD_HOME` (explicit) → a `.agent-board/` found by walking up (stopping at `$HOME`) → the main checkout's `.agent-board/` when the working directory sits in a linked git worktree → `~/.agent-board`. The home registry maps repository paths to projects; a local board needs no registry, since its location identifies the project.
+
+Linked git worktrees resolve to their main checkout's project in both modes: home-registry matching follows the worktree's `.git` pointer back to the registered repository, and a local board in the main checkout governs all of its worktrees (a committed board copy inside a worktree is never written to, so task state cannot fork per worktree). The workspace repo, however, stays the worktree itself — claims, verify, and other git operations run in the agent's own checkout. `AGENT_BOARD_REPO` remains the explicit override.
 
 ## Project, Goal, Task
 

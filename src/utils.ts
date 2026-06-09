@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -49,14 +49,75 @@ export function findLocalRoot(cwd: string): string | null {
 	return null;
 }
 
+export interface WorktreeInfo {
+	worktreeRoot: string; // top level of the linked worktree (the dir holding the `.git` file)
+	mainRoot: string; // top level of the main checkout the worktree belongs to
+}
+
+// Walk up from cwd looking for a `.git` entry. A linked git worktree marks its
+// root with a `.git` FILE pointing at `<main>/.git/worktrees/<name>`; follow
+// that pointer (and its `commondir` file) back to the main checkout. Returns
+// null for a main checkout (`.git` directory), a submodule (gitdir points at
+// `modules/`, no `commondir`), or a cwd outside git entirely.
+export function findWorktreeMainRoot(cwd: string): WorktreeInfo | null {
+	let dir = resolve(cwd);
+	while (true) {
+		const marker = join(dir, ".git");
+		try {
+			const stat = statSync(marker);
+			if (stat.isDirectory()) return null;
+			if (stat.isFile()) return parseWorktreeMarker(dir, marker);
+		} catch {
+			// no .git entry here; keep walking up
+		}
+		const parent = dirname(dir);
+		if (parent === dir) return null; // filesystem root
+		dir = parent;
+	}
+}
+
+function parseWorktreeMarker(worktreeRoot: string, marker: string): WorktreeInfo | null {
+	let contents: string;
+	try {
+		contents = readFileSync(marker, "utf-8");
+	} catch {
+		return null;
+	}
+	const match = contents.match(/^gitdir:\s*(.+?)\s*$/m);
+	if (!match) return null;
+	const gitdir = resolve(worktreeRoot, match[1]!);
+	// `commondir` points from the per-worktree gitdir back to the shared .git
+	// dir. Submodule gitdirs (`.git/modules/<name>`) have none, so they fall
+	// through to the layout check below and are rejected there.
+	try {
+		const common = readFileSync(join(gitdir, "commondir"), "utf-8").trim();
+		return { worktreeRoot, mainRoot: dirname(resolve(gitdir, common)) };
+	} catch {
+		// fall through to the canonical layout <main>/.git/worktrees/<name>
+	}
+	const worktreesDir = dirname(gitdir);
+	if (basename(worktreesDir) !== "worktrees" || basename(dirname(worktreesDir)) !== ".git") return null;
+	return { worktreeRoot, mainRoot: dirname(dirname(worktreesDir)) };
+}
+
 // Resolve which board governs this cwd, and how. Precedence:
-//   1. AGENT_BOARD_HOME env (explicit escape hatch) → home mode
-//   2. a `.agent-board/` found above cwd            → local mode
-//   3. ~/.agent-board                               → home mode (default)
+//   1. AGENT_BOARD_HOME env (explicit escape hatch)  → home mode
+//   2. a `.agent-board/` found above cwd             → local mode
+//      (inside a linked git worktree, the main checkout's board replaces the
+//      worktree's own committed copy — that copy is a stale snapshot, and
+//      writing to it would fork task state per worktree)
+//   3. the main checkout's `.agent-board/`, when cwd is in a linked worktree
+//      that has no board of its own                  → local mode
+//   4. ~/.agent-board                                → home mode (default)
 export function resolveRoot(cwd: string): { root: string; mode: WorkspaceMode } {
 	const override = process.env.AGENT_BOARD_HOME;
 	if (override) return { root: override, mode: "home" };
 	const local = findLocalRoot(cwd);
+	const worktree = findWorktreeMainRoot(cwd);
+	if (worktree && (!local || local === join(worktree.worktreeRoot, BOARD_DIR_NAME))) {
+		const mainBoard = join(worktree.mainRoot, BOARD_DIR_NAME);
+		if (isDirectory(mainBoard)) return { root: mainBoard, mode: "local" };
+	}
 	if (local) return { root: local, mode: "local" };
 	return { root: getDefaultHomeRoot(), mode: "home" };
 }

@@ -2,6 +2,11 @@
 
 Notable changes to `@questpie/agent-board` (CLI binaries: `agent-board`, `agent`).
 
+## Unreleased
+
+- **Worktree-aware resolution**: commands run inside a linked git worktree now resolve to the project of its main checkout. Home-registry lookups follow the worktree's `.git` pointer back to the registered repository; a local board in the main checkout governs all of its worktrees (a committed board copy inside a worktree is no longer written to, so task state cannot fork per worktree). The workspace repo stays the worktree itself, so claims and verify run in the agent's own checkout — `AGENT_BOARD_REPO` remains the explicit override. Fixes spurious `No agent-board project found` / exit 1 from agents working in worktrees.
+- **Actionable resolution errors**: the project-not-found error now reports the cwd it failed for, lists registered projects, and points at `--project <slug>` / `AGENT_BOARD_PROJECT` before suggesting `agent-board init` — so an agent in a worktree no longer gets steered into registering a duplicate project.
+
 ## 0.4.0 — 2026-06-10
 
 First npm release, published as `@questpie/agent-board`.

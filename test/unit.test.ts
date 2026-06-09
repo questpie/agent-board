@@ -5,7 +5,8 @@ import { describe, expect, test } from "bun:test";
 import { parseFrontmatter, stringifyFrontmatter } from "../src/markdown.js";
 import { createSpec } from "../src/documents.js";
 import { gitState } from "../src/git.js";
-import { atomicWrite } from "../src/utils.js";
+import { atomicWrite, findWorktreeMainRoot } from "../src/utils.js";
+import { resolveWorkspace } from "../src/workspace.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
 import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseStructuredOutput, resolveCodexAcpBin, runLimited } from "../src/flow.js";
@@ -306,6 +307,119 @@ describe("skill drift audit", () => {
 	test("ignores prose and placeholders, only checks code context", () => {
 		expect(findDrift("Use agent-board foo to orchestrate things.", fixture())).toEqual([]);
 		expect(findDrift("`agent-board foo <subcommand>`", fixture())).toEqual([]);
+	});
+});
+
+describe("worktree resolution", () => {
+	test("resolves a linked worktree to its main checkout via commondir", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-"));
+		const main = join(base, "main");
+		const wt = join(base, "wt");
+		await mkdir(join(main, ".git", "worktrees", "wt"), { recursive: true });
+		await writeFile(join(main, ".git", "worktrees", "wt", "commondir"), "../..\n");
+		await mkdir(wt, { recursive: true });
+		await writeFile(join(wt, ".git"), `gitdir: ${join(main, ".git", "worktrees", "wt")}\n`);
+
+		// Detected from the worktree root and from any (even not-yet-created) subdir.
+		expect(findWorktreeMainRoot(wt)).toEqual({ worktreeRoot: wt, mainRoot: main });
+		expect(findWorktreeMainRoot(join(wt, "src", "deep"))).toEqual({ worktreeRoot: wt, mainRoot: main });
+		// The main checkout has a .git directory, not a pointer file.
+		expect(findWorktreeMainRoot(main)).toBeNull();
+	});
+
+	test("resolves a relative gitdir pointer without a commondir file", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-rel-"));
+		const main = join(base, "main");
+		const wt = join(base, "wt");
+		await mkdir(join(main, ".git", "worktrees", "wt"), { recursive: true });
+		await mkdir(wt, { recursive: true });
+		await writeFile(join(wt, ".git"), "gitdir: ../main/.git/worktrees/wt");
+		expect(findWorktreeMainRoot(wt)).toEqual({ worktreeRoot: wt, mainRoot: main });
+	});
+
+	test("rejects submodule pointers and non-git directories", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-sub-"));
+		const sub = join(base, "sub");
+		await mkdir(sub, { recursive: true });
+		await writeFile(join(sub, ".git"), `gitdir: ${join(base, "main", ".git", "modules", "sub")}\n`);
+		expect(findWorktreeMainRoot(sub)).toBeNull();
+		expect(findWorktreeMainRoot(join(base, "plain"))).toBeNull();
+	});
+
+	test("resolves a home-board project from a worktree and routes repoPath to it", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-ws-"));
+		const home = join(base, "home");
+		const repo = join(base, "repo");
+		const wt = join(base, "repo-wt");
+		const projectPath = join(home, "projects", "demo");
+		await mkdir(join(projectPath, "goals", "main"), { recursive: true });
+		await writeFile(
+			join(home, "registry.json"),
+			JSON.stringify({ projects: { demo: { slug: "demo", repo_path: repo, project_path: projectPath } } }),
+		);
+		await writeFile(
+			join(projectPath, "project.json"),
+			JSON.stringify({
+				slug: "demo",
+				repo_path: repo,
+				active_goal: "main",
+				created: "2026-01-01T00:00:00.000Z",
+				updated: "2026-01-01T00:00:00.000Z",
+			}),
+		);
+		await mkdir(join(repo, ".git", "worktrees", "wt"), { recursive: true });
+		await writeFile(join(repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
+		await mkdir(wt, { recursive: true });
+		await writeFile(join(wt, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "wt")}\n`);
+
+		const saved: Record<string, string | undefined> = {};
+		for (const key of ["AGENT_BOARD_HOME", "AGENT_BOARD_PROJECT", "AGENT_BOARD_GOAL", "AGENT_BOARD_REPO"]) {
+			saved[key] = process.env[key];
+			delete process.env[key];
+		}
+		process.env.AGENT_BOARD_HOME = home;
+		try {
+			const workspace = resolveWorkspace(wt);
+			expect(workspace.projectSlug).toBe("demo");
+			// Git operations target the worktree the agent works in...
+			expect(workspace.repoPath).toBe(wt);
+			// ...while the main checkout keeps resolving to the canonical repo.
+			expect(resolveWorkspace(repo).repoPath).toBe(repo);
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
+	test("names known projects and routing overrides when nothing matches", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-miss-"));
+		const home = join(base, "home");
+		const elsewhere = join(base, "elsewhere");
+		await mkdir(home, { recursive: true });
+		await mkdir(elsewhere, { recursive: true });
+		await writeFile(
+			join(home, "registry.json"),
+			JSON.stringify({ projects: { demo: { slug: "demo", repo_path: join(base, "repo"), project_path: join(home, "projects", "demo") } } }),
+		);
+
+		const saved: Record<string, string | undefined> = {};
+		for (const key of ["AGENT_BOARD_HOME", "AGENT_BOARD_PROJECT", "AGENT_BOARD_GOAL", "AGENT_BOARD_REPO"]) {
+			saved[key] = process.env[key];
+			delete process.env[key];
+		}
+		process.env.AGENT_BOARD_HOME = home;
+		try {
+			expect(() => resolveWorkspace(elsewhere)).toThrow(/No agent-board project found for .*elsewhere/);
+			expect(() => resolveWorkspace(elsewhere)).toThrow(/Known projects in .*registry\.json: demo/);
+			expect(() => resolveWorkspace(elsewhere)).toThrow(/--project <slug> or set AGENT_BOARD_PROJECT/);
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
 	});
 });
 

@@ -99,7 +99,7 @@ Use this skill when implementing or fixing ONE concrete agent-board task. You ar
 
 - Your project, goal, and repo are pinned via environment: \`AGENT_BOARD_PROJECT\`, \`AGENT_BOARD_GOAL\`, and (for a git worktree) \`AGENT_BOARD_REPO\`. Work only inside them.
 - Never run \`agent-board goal use\` — the active goal is shared mutable state; switching it derails every other agent in the project.
-- If you share one repository with another agent, work in your own git worktree and set \`AGENT_BOARD_REPO\` to it, so checkouts, branches, and verify do not collide.
+- If you share one repository with another agent, work in your own git worktree and set \`AGENT_BOARD_REPO\` to it, so checkouts, branches, and verify do not collide. (A linked worktree also resolves to its main checkout's project automatically when the env is missing; the env vars remain the explicit, preferred pin.)
 - If spawned by \`agent-board flow\`, you are still a normal worker. The flow runner does not waive claim, branch, verify, or evidence rules.
 
 ## Don't
@@ -163,13 +163,16 @@ Use this skill when setting up or changing \`agent-board\` itself in a project.
 
 \`agent-board\` is file-based and stores a board in one of two places:
 
-- **Home (default):** the shared \`~/.agent-board\` (override with \`AGENT_BOARD_HOME\`). Multiplexes many projects under \`projects/<project-slug>\`, indexed by \`registry.json\` (maps \`repo_path\` -> project). Keeps board state out of the repo so parallel agents/worktrees never collide on it.
+- **Home (default):** the shared \`~/.agent-board\` (override with \`AGENT_BOARD_HOME\`). Multiplexes many projects under \`projects/<project-slug>\`, indexed by \`registry.json\` (maps \`repo_path\` -> project; linked git worktrees resolve to their main checkout's project automatically). Keeps board state out of the repo so parallel agents/worktrees never collide on it.
 - **Local:** a single-project \`.agent-board/\` committed inside the repo, git-versioned with the project. Flat layout (no \`projects/\` wrapper, no \`registry.json\`), and \`project.json\` omits \`repo_path\` (derived from the board location) so it stays portable across clones and machines.
 
 Discovery precedence when resolving which board governs a command:
 1. \`AGENT_BOARD_HOME\` set -> that home board.
-2. a \`.agent-board/\` found by walking up from cwd (stops at \`$HOME\`) -> that local board.
-3. otherwise \`~/.agent-board\`.
+2. a \`.agent-board/\` found by walking up from cwd (stops at \`$HOME\`) -> that local board. Inside a linked git worktree, the main checkout's board wins over the worktree's own committed copy, so every worktree shares one board.
+3. cwd inside a linked git worktree whose main checkout has a \`.agent-board/\` -> that local board.
+4. otherwise \`~/.agent-board\`.
+
+Home-registry matching follows the same rule: a cwd inside a linked git worktree resolves to the project registered for its main checkout, and the workspace repo becomes the worktree itself so git operations stay in the agent's own checkout (\`AGENT_BOARD_REPO\` still wins as the explicit override).
 
 Layout:
 

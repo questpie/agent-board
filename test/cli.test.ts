@@ -70,6 +70,53 @@ describe("cli", () => {
 		expect(existsSync(join(board, "goals", "main", "tasks", "add-cli.md"))).toBe(true);
 	});
 
+	test("resolves a home-board project from inside a linked git worktree", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-wt-home-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await gitInit(repo);
+		await run(repo, env, ["init", "--project", "demo"]);
+		await run(repo, env, ["new", "Worktree Task", "--status", "ready"]);
+
+		const wt = join(dirname(repo), `${basename(repo)}-wt`);
+		await gitWorktreeAdd(repo, wt);
+
+		// The worktree is a sibling of repo_path, yet commands resolve without --project.
+		expect(await run(wt, env, ["tasks"])).toContain("worktree-task");
+	});
+
+	test("routes a linked worktree to the main checkout's local board", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-wt-local-"));
+		const env = noHomeEnv();
+		await gitInit(repo);
+		await run(repo, env, ["init", "--local", "--project", "demo"]);
+		// Commit the board so the worktree checkout carries its own (stale) copy.
+		await gitCommitAll(repo, "board");
+		const wt = join(dirname(repo), `${basename(repo)}-wt`);
+		await gitWorktreeAdd(repo, wt);
+		expect(existsSync(join(wt, ".agent-board", "project.json"))).toBe(true);
+
+		await run(wt, env, ["new", "From Worktree", "--status", "ready"]);
+
+		// The write lands in the main checkout's board, not the worktree's copy.
+		expect(existsSync(join(repo, ".agent-board", "goals", "main", "tasks", "from-worktree.md"))).toBe(true);
+		expect(existsSync(join(wt, ".agent-board", "goals", "main", "tasks", "from-worktree.md"))).toBe(false);
+	});
+
+	test("unresolved project error names known projects and overrides", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-known-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const elsewhere = await mkdtemp(join(tmpdir(), "agent-board-elsewhere-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await run(repo, env, ["init", "--project", "demo"]);
+
+		const output = await runFail(elsewhere, env, ["tasks"]);
+		expect(output).toContain("No agent-board project found for");
+		expect(output).toContain("demo");
+		expect(output).toContain("--project <slug>");
+		expect(output).toContain("AGENT_BOARD_PROJECT");
+	});
+
 	test("relocate --to local moves a home board into the repo and cleans up home", async () => {
 		const repo = await mkdtemp(join(tmpdir(), "agent-board-reloc-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
@@ -939,6 +986,20 @@ async function gitInit(dir: string): Promise<void> {
 	await writeFile(join(dir, "g.txt"), "b");
 	await g(["add", "."]);
 	await g(["commit", "-m", "two"]);
+}
+
+async function gitCommitAll(dir: string, message: string): Promise<void> {
+	const g = (args: string[]) =>
+		Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "pipe" }).exited;
+	await g(["add", "."]);
+	await g(["commit", "-m", message]);
+}
+
+async function gitWorktreeAdd(repo: string, path: string): Promise<void> {
+	await Bun.spawn(["git", "-C", repo, "worktree", "add", path], {
+		stdout: "pipe",
+		stderr: "pipe",
+	}).exited;
 }
 
 async function gitDetach(dir: string): Promise<void> {
