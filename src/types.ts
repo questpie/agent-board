@@ -40,6 +40,11 @@ export interface TaskFile {
 
 export type OverlayScope = "global" | "project" | "goal";
 
+// Where a board lives. "home" is the shared ~/.agent-board (multi-project,
+// registry-indexed). "local" is a single-project .agent-board/ inside a repo,
+// discovered by walking up from cwd and meant to be git-versioned with the repo.
+export type WorkspaceMode = "home" | "local";
+
 export interface RegistryProject {
 	slug: string;
 	repo_path: string;
@@ -52,7 +57,9 @@ export interface Registry {
 
 export interface ProjectConfig {
 	slug: string;
-	repo_path: string;
+	// Absolute repo path. Stored for home boards; omitted for local boards
+	// (derived from the board's own location) so project.json stays portable.
+	repo_path?: string;
 	active_goal: string;
 	related_projects: string[];
 	created: string;
@@ -61,6 +68,7 @@ export interface ProjectConfig {
 
 export interface Workspace {
 	root: string;
+	mode: WorkspaceMode;
 	projectSlug: string;
 	projectPath: string;
 	repoPath: string;

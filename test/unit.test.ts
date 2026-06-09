@@ -10,6 +10,8 @@ import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "..
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
 import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseStructuredOutput, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
+import { Command } from "commander";
+import { findDrift } from "../src/skills-audit.js";
 
 describe("markdown frontmatter", () => {
 	test("parses and stringifies simple task metadata", () => {
@@ -251,6 +253,36 @@ describe("runLimited", () => {
 	});
 });
 
+describe("skill drift audit", () => {
+	function fixture(): Command {
+		const program = new Command();
+		const foo = program.command("foo").option("--bar <v>", "bar");
+		foo.command("baz").option("--qux", "qux");
+		return program;
+	}
+
+	test("accepts real commands and flags", () => {
+		const program = fixture();
+		expect(findDrift("`agent-board foo --bar x`", program)).toEqual([]);
+		expect(findDrift("`agent-board foo baz --qux`", program)).toEqual([]);
+	});
+
+	test("flags a stale command name", () => {
+		const issues = findDrift("`agent-board nope`", fixture());
+		expect(issues.map((issue) => [issue.kind, issue.token])).toEqual([["unknown-command", "nope"]]);
+	});
+
+	test("flags a stale flag on a real command", () => {
+		const issues = findDrift("`agent-board foo --gone`", fixture());
+		expect(issues.map((issue) => [issue.kind, issue.token])).toEqual([["unknown-flag", "--gone"]]);
+	});
+
+	test("ignores prose and placeholders, only checks code context", () => {
+		expect(findDrift("Use agent-board foo to orchestrate things.", fixture())).toEqual([]);
+		expect(findDrift("`agent-board foo <subcommand>`", fixture())).toEqual([]);
+	});
+});
+
 async function tempWorkspace(): Promise<Workspace> {
 	const cwd = await mkdtemp(join(tmpdir(), "agent-board-cwd-"));
 	const root = await mkdtemp(join(tmpdir(), "agent-board-root-"));
@@ -266,6 +298,7 @@ async function tempWorkspace(): Promise<Workspace> {
 	}
 	return {
 		root,
+		mode: "home",
 		projectSlug: "test",
 		projectPath,
 		repoPath: cwd,

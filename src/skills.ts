@@ -156,32 +156,50 @@ export const configSkillReadme = `# Agent Board Configuration
 
 Use this skill when setting up or changing \`agent-board\` itself in a project.
 
-## Configuration Model
+## Storage Modes
 
-\`agent-board\` is file-based:
+\`agent-board\` is file-based and stores a board in one of two places:
 
-- Global home: \`~/.agent-board\`, override with \`AGENT_BOARD_HOME\`.
-- Registry: \`~/.agent-board/registry.json\`.
-- Project workspace: \`~/.agent-board/projects/<project-slug>\`.
-- Project config: \`project.json\` with \`repo_path\`, \`active_goal\`, and \`related_projects\`.
-- Goals: \`projects/<project-slug>/goals/<goal-slug>\`.
-- Tasks are goal-level only.
-- Project flow scripts: \`projects/<project-slug>/flows/*.mjs\`.
-- Flow run artifacts: \`projects/<project-slug>/goals/<goal-slug>/flows/runs/<run-id>/\`.
-- Specs and knowledge: overlay layers at global, project, and goal scope.
-- Skills: \`~/.agent-board/skills/{agent-board,agent-board-worker,agent-board-research}\`, linked globally into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`.
+- **Home (default):** the shared \`~/.agent-board\` (override with \`AGENT_BOARD_HOME\`). Multiplexes many projects under \`projects/<project-slug>\`, indexed by \`registry.json\` (maps \`repo_path\` -> project). Keeps board state out of the repo so parallel agents/worktrees never collide on it.
+- **Local:** a single-project \`.agent-board/\` committed inside the repo, git-versioned with the project. Flat layout (no \`projects/\` wrapper, no \`registry.json\`), and \`project.json\` omits \`repo_path\` (derived from the board location) so it stays portable across clones and machines.
 
-Why: home registry avoids repo-local conflicts/source-control noise; project maps to repo; goal keeps focus; overlays avoid copying.
+Discovery precedence when resolving which board governs a command:
+1. \`AGENT_BOARD_HOME\` set -> that home board.
+2. a \`.agent-board/\` found by walking up from cwd (stops at \`$HOME\`) -> that local board.
+3. otherwise \`~/.agent-board\`.
+
+Layout:
+
+- Project config: \`project.json\` with \`active_goal\` and \`related_projects\` (plus \`repo_path\` for home boards).
+- Goals: \`<board>/goals/<goal-slug>\`; tasks are goal-level only.
+- Flow scripts: \`<board>/flows/*.mjs\`; run artifacts: \`<board>/goals/<goal-slug>/flows/runs/<run-id>/\`.
+- Home boards prefix the above paths with \`projects/<project-slug>/\`.
+- Specs and knowledge: overlay layers at global, project, and goal scope. In a local board, global and project scope collapse (single project).
+- Skills are always global: \`~/.agent-board/skills/{agent-board,agent-board-worker,agent-board-research}\`, linked into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`. Local boards never copy skills into the repo.
+
+Why: home keeps board state out of source control and lets many projects/agents share one index; local lets a single project version its board (goals, tasks, specs) alongside the code.
 
 ## Setup
 
 Run from the project root:
 
 \`\`\`sh
-agent-board init --project <slug>
+agent-board init --project <slug>            # home board (default, shared)
+agent-board init --local --project <slug>    # repo board (.agent-board/, git-versioned)
 \`\`\`
 
-Init is non-destructive and does not create \`.agent\` or project-local skill links. Use \`agent-board skills install\` for global skill links, and \`agent-board skills doctor\` to see which runtimes are linked.
+Without \`--local\`/\`--global\`, an interactive terminal is prompted; non-interactive callers (agents, CI) default to home. \`init --local\` anchors the board at the git root and writes a \`.agent-board/.gitignore\` for transient run artifacts.
+
+Move an existing board between modes:
+
+\`\`\`sh
+agent-board relocate --to local              # home -> repo (.agent-board/)
+agent-board relocate --to home               # repo -> shared home
+\`\`\`
+
+Relocate copies goals/specs/knowledge/flows and rewrites \`project.json\` for the target layout. It keeps the source as a backup unless you pass \`--cleanup\`.
+
+Init is non-destructive and does not create \`.agent\` or project-local skill links. Use \`agent-board skills install\` for global skill links, \`agent-board skills doctor\` to see which runtimes are linked, and \`agent-board skills check\` to confirm these docs still match the CLI.
 
 Orient fresh projects:
 

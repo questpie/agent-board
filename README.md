@@ -32,18 +32,23 @@ agent-board skills install
 ~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research}
 ```
 
-Check links with:
+Check links, and that the bundled skill docs still match the CLI:
 
 ```sh
 agent-board skills doctor
+agent-board skills check
 ```
+
+`skills check` is a drift guard: it fails if a skill doc references a command or flag the CLI no longer has.
 
 ## 60-Second Quickstart
 
 From a repository:
 
 ```sh
-agent-board init --project my-project
+agent-board init --project my-project          # shared home board (~/.agent-board)
+# or version the board inside the repo, alongside your code:
+# agent-board init --local --project my-project  # repo board (.agent-board/)
 agent-board goal new "CLI MVP" --id cli-mvp
 agent-board goal use cli-mvp
 
@@ -118,7 +123,13 @@ native `codex-acp` binary directly when it is available. Set
 
 ## Concepts
 
-State lives under `~/.agent-board` by default. Repositories are registered by path, tasks belong to goals, and specs/knowledge support global, project, and goal overlays.
+A board lives in one of two places:
+
+- **Home (default):** the shared `~/.agent-board`, multiplexing many repos by path via a registry. Keeps board state out of source control so parallel agents and worktrees never collide on it.
+- **Local:** a single-project `.agent-board/` inside the repo (`agent-board init --local`), git-versioned with your code. Discovered by walking up from the working directory — no registry or env needed, and `project.json` stores no absolute paths, so it stays portable across clones.
+
+Move an existing board between modes with `agent-board relocate --to local|home`. Within either, tasks belong to goals, and specs/knowledge support global, project, and goal overlays.
+
 Agents should prefer explicit subcommands such as `task cat/write`, `spec cat/write`, `knowledge cat/write`, and `flow cat/write`; filesystem paths are a convenience of the default local driver.
 
 Read the deeper docs:
@@ -137,7 +148,7 @@ bun run check-types
 bun test
 ```
 
-The tests cover frontmatter parsing, task graph links, overlays, git state detection, verify gates, claim guards, atomic writes, concurrent-claim locking, global skill install, related project planning, migration, and mocked flow runs.
+The tests cover frontmatter parsing, task graph links, overlays, git state detection, verify gates, claim guards, atomic writes, concurrent-claim locking, global skill install, related project planning, migration, mocked flow runs, local/home boards, board relocation, skill/CLI drift detection, and the web viewer.
 
 ## License
 

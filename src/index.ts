@@ -6,30 +6,35 @@ import { Command } from "commander";
 import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, writeKnowledgeBody, writeSpecBody } from "./documents.js";
 import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
-import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
+import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, relocateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
-import type { TaskFile, Workspace } from "./types.js";
+import { auditSkillDrift } from "./skills-audit.js";
+import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
+import { startWebServer } from "./web.js";
 
 const program = new Command();
 
 program
 	.name("agent-board")
 	.description("Markdown task board and execution contract for coding agents")
-	.version("0.3.0")
+	.version("0.4.0")
 	.allowUnknownOption(true);
 
 program
 	.command("init")
 	.description("Initialize an agent-board project binding for this repo")
 	.option("--project <slug>", "Project slug")
+	.option("--local", "Store the board in the repo (.agent-board/, git-versioned)")
+	.option("--global", "Store the board in home (~/.agent-board), shared across repos [default]")
 	.action(async (options) => {
 		await main(async () => {
-			const opts = readOptions<{ project?: string }>(options);
-			const { workspace, warnings } = await initWorkspace(process.cwd(), opts.project);
-			console.log(`Initialized ${workspace.projectSlug}`);
-			console.log(`Project: ${workspace.projectPath}`);
+			const opts = readOptions<{ project?: string; local?: boolean; global?: boolean }>(options);
+			const mode = resolveInitMode(opts);
+			const { workspace, warnings } = await initWorkspace(process.cwd(), { projectSlug: opts.project, mode });
+			console.log(`Initialized ${workspace.projectSlug} (${workspace.mode})`);
+			console.log(`Board: ${workspace.projectPath}`);
 			console.log(`Goal: ${workspace.goalSlug}`);
 			console.log(`Repo: ${workspace.repoPath}`);
 			for (const warning of warnings) console.warn(`Warning: ${warning}`);
@@ -46,6 +51,35 @@ program
 			const { workspace, migrated } = await migrateWorkspace(process.cwd(), opts.project);
 			console.log(`Migrated ${workspace.projectSlug}`);
 			console.log(migrated.length ? `Moved: ${migrated.join(", ")}` : "Nothing to migrate.");
+		});
+	});
+
+program
+	.command("relocate")
+	.description("Move the board between home (~/.agent-board) and the repo (.agent-board/)")
+	.requiredOption("--to <where>", "Destination: 'local' (in repo) or 'home' (shared)")
+	.option("--cleanup", "Delete the source copy after moving (default: keep it as a backup)")
+	.option("--project <slug>", "Project slug to relocate (home source)")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ to: string; cleanup?: boolean; project?: string }>(options);
+			const to: WorkspaceMode | null =
+				opts.to === "local" ? "local" : opts.to === "home" ? "home" : null;
+			if (!to) throw new Error("--to must be 'local' or 'home'");
+			const result = await relocateWorkspace(process.cwd(), {
+				to,
+				cleanup: opts.cleanup ?? false,
+				projectSlug: opts.project,
+			});
+			console.log(`Relocated ${result.slug} -> ${result.to}`);
+			console.log(`From: ${result.from}`);
+			console.log(`To:   ${result.target}`);
+			console.log(result.copied.length ? `Copied: ${result.copied.join(", ")}` : "Copied: nothing");
+			if (result.cleaned) console.log("Source removed.");
+			else if (result.backup) console.log(`Backup kept: ${result.backup} (re-run with --cleanup to remove)`);
+			if (result.to === "local") {
+				console.log("Next: commit .agent-board/ with the repo — other clones pick it up automatically, no env needed.");
+			}
 		});
 	});
 
@@ -766,6 +800,40 @@ skills
 		});
 	});
 
+skills
+	.command("check")
+	.description("Check that bundled skill docs still match the live CLI (drift guard)")
+	.action(async () => {
+		await main(async () => {
+			const issues = auditSkillDrift(program);
+			if (issues.length === 0) {
+				console.log("No drift: skill docs match the CLI.");
+				return;
+			}
+			for (const issue of issues) {
+				console.error(`[${issue.source}] ${issue.kind}: ${issue.token}  (in "${issue.invocation}")`);
+			}
+			throw new Error(`Found ${issues.length} skill/CLI drift issue(s). Update the docs in src/skills.ts.`);
+		});
+	});
+
+program
+	.command("web")
+	.description("Start a local read-only web viewer for the board")
+	.option("--port <n>", "Port to listen on", "4317")
+	.option("--host <host>", "Host to bind", "127.0.0.1")
+	.option("--no-open", "Do not open the browser automatically")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ port: string; host: string; open: boolean }>(options);
+			await startWebServer({
+				port: parsePositiveInt(opts.port, "--port"),
+				host: opts.host,
+				open: opts.open !== false,
+			});
+		});
+	});
+
 function currentWorkspace(): Workspace {
 	const options = cliScopeOverrides();
 	return resolveWorkspace(process.cwd(), {
@@ -823,6 +891,21 @@ function readOptions<T extends Record<string, unknown>>(value: T | { opts(): T }
 	return typeof (value as { opts?: unknown }).opts === "function"
 		? (value as { opts(): T }).opts()
 		: value as T;
+}
+
+function resolveInitMode(opts: { local?: boolean; global?: boolean }): WorkspaceMode {
+	if (opts.local && opts.global) throw new Error("Use either --local or --global, not both.");
+	if (opts.local) return "local";
+	if (opts.global) return "home";
+	// Interactive humans get to choose; non-interactive callers (agents, CI)
+	// default to the shared home board to preserve existing behavior.
+	if (process.stdin.isTTY && typeof prompt === "function") {
+		const answer = prompt(
+			"Where should this board live? [1] this repo (.agent-board, git-versioned)  [2] home (~/.agent-board) [default]:",
+		);
+		if (answer?.trim() === "1") return "local";
+	}
+	return "home";
 }
 
 async function readInputSource(source: string): Promise<string> {

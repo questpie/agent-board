@@ -2,8 +2,9 @@ import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
-import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace } from "./types.js";
-import { atomicWrite, ensureDir, getHomeRoot, nowIso, projectSlugFromCwd, slugify } from "./utils.js";
+import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace, WorkspaceMode } from "./types.js";
+import { atomicWrite, ensureDir, findLocalRoot, getHomeRoot, nowIso, projectSlugFromCwd, resolveRoot, slugify } from "./utils.js";
+import { gitRoot } from "./git.js";
 import {
 	configSkillReadme,
 	flowOrchestrationSkillReadme,
@@ -21,6 +22,17 @@ import {
 
 const DEFAULT_GOAL = "main";
 
+const BOARD_DIR_NAME = ".agent-board";
+
+// Committed into a local board so transient run artifacts (and atomic-write temp
+// files) never get versioned alongside the board's durable state.
+const LOCAL_GITIGNORE = [
+	"# agent-board — transient run artifacts, safe to ignore",
+	"goals/*/flows/runs/",
+	"*.tmp.*",
+	"",
+].join("\n");
+
 export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research"] as const;
 
 const SKILL_RUNTIMES = ["claude", "agents", "cursor"] as const;
@@ -37,7 +49,20 @@ export interface GoalInfo {
 	path: string;
 }
 
+export interface InitWorkspaceOptions {
+	projectSlug?: string;
+	mode?: WorkspaceMode;
+}
+
 export async function initWorkspace(
+	cwd: string,
+	options: InitWorkspaceOptions = {},
+): Promise<{ workspace: Workspace; warnings: string[] }> {
+	if (options.mode === "local") return initLocalWorkspace(cwd, options.projectSlug);
+	return initHomeWorkspace(cwd, options.projectSlug);
+}
+
+async function initHomeWorkspace(
 	cwd: string,
 	projectSlug = projectSlugFromCwd(cwd),
 ): Promise<{ workspace: Workspace; warnings: string[] }> {
@@ -77,16 +102,68 @@ export async function initWorkspace(
 	};
 }
 
+// A repo-local board: a single project flattened into <repo>/.agent-board, with
+// no projects/<slug> wrapper, no registry, and no skills copy (those stay global
+// in home). repo_path is derived from the board's location, never stored, so the
+// board is portable and git-versionable with the repo.
+async function initLocalWorkspace(
+	cwd: string,
+	projectSlug?: string,
+): Promise<{ workspace: Workspace; warnings: string[] }> {
+	const repoPath = (await gitRoot(cwd)) ?? resolve(cwd);
+	const root = join(repoPath, BOARD_DIR_NAME);
+	const slug = projectSlug ?? projectSlugFromCwd(repoPath);
+	const now = nowIso();
+
+	await ensureProjectLayout(root);
+	const existing = await readProjectConfig(root).catch(() => null);
+	const project: ProjectConfig = {
+		slug,
+		active_goal: existing?.active_goal || DEFAULT_GOAL,
+		related_projects: existing?.related_projects ?? [],
+		created: existing?.created || now,
+		updated: now,
+	};
+	await writeProjectConfig(root, project);
+	await ensureGoal(root, project.active_goal, project.active_goal === DEFAULT_GOAL ? "Main" : project.active_goal);
+	await writeIfMissing(join(root, ".gitignore"), LOCAL_GITIGNORE);
+
+	const goalSlug = project.active_goal;
+	return {
+		workspace: {
+			root,
+			mode: "local",
+			projectSlug: slug,
+			projectPath: root,
+			repoPath,
+			goalSlug,
+			goalPath: join(root, "goals", goalSlug),
+			cwd: resolve(cwd),
+			project,
+		},
+		warnings: [],
+	};
+}
+
 export function resolveWorkspace(
 	cwd: string,
 	options: ResolveWorkspaceOptions = {},
 ): Workspace {
-	const root = getHomeRoot();
-	const projectSlug = options.projectSlug
-		?? process.env.AGENT_BOARD_PROJECT
-		?? resolveProjectSlug(root, cwd);
-	const projectPath = join(root, "projects", projectSlug);
-	const project = readProjectConfigSync(projectPath);
+	const { root, mode } = resolveRoot(cwd);
+	let projectSlug: string;
+	let projectPath: string;
+	let project: ProjectConfig;
+	if (mode === "local") {
+		projectPath = root;
+		project = readProjectConfigSync(projectPath);
+		projectSlug = options.projectSlug ?? project.slug;
+	} else {
+		projectSlug = options.projectSlug
+			?? process.env.AGENT_BOARD_PROJECT
+			?? resolveProjectSlug(root, cwd);
+		projectPath = join(root, "projects", projectSlug);
+		project = readProjectConfigSync(projectPath);
+	}
 	const goalSlug = options.goalSlug
 		?? process.env.AGENT_BOARD_GOAL
 		?? project.active_goal
@@ -97,9 +174,10 @@ export function resolveWorkspace(
 	}
 	return {
 		root,
+		mode,
 		projectSlug,
 		projectPath,
-		repoPath: process.env.AGENT_BOARD_REPO ? resolve(process.env.AGENT_BOARD_REPO) : project.repo_path,
+		repoPath: resolveRepoPath(project, mode, root, cwd),
 		goalSlug,
 		goalPath,
 		cwd,
@@ -107,7 +185,23 @@ export function resolveWorkspace(
 	};
 }
 
-export async function listProjects(root = getHomeRoot()): Promise<RegistryProject[]> {
+// AGENT_BOARD_REPO wins (worktree routing), then a stored repo_path (home
+// boards), else derive it: a local board sits at <repo>/.agent-board, so its
+// repo is the board's parent directory.
+function resolveRepoPath(project: ProjectConfig, mode: WorkspaceMode, root: string, cwd: string): string {
+	if (process.env.AGENT_BOARD_REPO) return resolve(process.env.AGENT_BOARD_REPO);
+	if (project.repo_path) return resolve(project.repo_path);
+	if (mode === "local") return dirname(root);
+	return resolve(cwd);
+}
+
+export async function listProjects(cwd = process.cwd()): Promise<RegistryProject[]> {
+	const { root, mode } = resolveRoot(cwd);
+	if (mode === "local") {
+		const project = await readProjectConfig(root).catch(() => null);
+		if (!project) return [];
+		return [{ slug: project.slug, repo_path: dirname(root), project_path: root }];
+	}
 	const registry = await readRegistry(root);
 	return Object.values(registry.projects).sort((a, b) => a.slug.localeCompare(b.slug));
 }
@@ -247,7 +341,7 @@ export async function migrateWorkspace(
 	await writeProjectConfig(projectPath, project);
 	await upsertRegistryProject(root, {
 		slug: projectSlug,
-		repo_path: project.repo_path,
+		repo_path: project.repo_path ?? repoPath,
 		project_path: projectPath,
 	});
 
@@ -260,12 +354,121 @@ export async function migrateWorkspace(
 	}
 
 	return {
-		workspace: resolveWorkspace(project.repo_path, {
+		workspace: resolveWorkspace(project.repo_path ?? repoPath, {
 			projectSlug,
 			goalSlug: project.active_goal,
 		}),
 		migrated,
 	};
+}
+
+export interface RelocateResult {
+	slug: string;
+	to: WorkspaceMode;
+	from: string;
+	target: string;
+	copied: string[];
+	cleaned: boolean;
+	backup: string | null;
+}
+
+const RELOCATE_TREES = ["goals", "specs", "knowledge", "flows"] as const;
+
+// Move a board between home (~/.agent-board/projects/<slug>) and a repo-local
+// .agent-board/. Copies the durable trees, rewrites project.json for the target
+// layout (drops repo_path for local, restores it for home), and either removes
+// the source (cleanup) or leaves it as a backup.
+export async function relocateWorkspace(
+	cwd: string,
+	options: { to: WorkspaceMode; cleanup?: boolean; projectSlug?: string },
+): Promise<RelocateResult> {
+	const cleanup = options.cleanup ?? false;
+	return options.to === "local"
+		? relocateToLocal(cwd, cleanup, options.projectSlug)
+		: relocateToHome(cwd, cleanup);
+}
+
+async function relocateToLocal(cwd: string, cleanup: boolean, projectSlug?: string): Promise<RelocateResult> {
+	const homeRoot = getHomeRoot();
+	const slug = projectSlug ?? resolveProjectSlug(homeRoot, cwd);
+	const source = join(homeRoot, "projects", slug);
+	const home = await readProjectConfig(source).catch(() => null);
+	if (!home) throw new Error(`No home board to relocate for project: ${slug}`);
+
+	const repoPath = (await gitRoot(cwd)) ?? resolve(cwd);
+	const target = join(repoPath, BOARD_DIR_NAME);
+	if (existsSync(target)) throw new Error(`Local board already exists: ${target}`);
+
+	await ensureProjectLayout(target);
+	const copied = await copyTrees(source, target);
+	const project: ProjectConfig = {
+		slug,
+		active_goal: home.active_goal,
+		related_projects: home.related_projects ?? [],
+		created: home.created,
+		updated: nowIso(),
+	};
+	await writeProjectConfig(target, project);
+	await writeIfMissing(join(target, ".gitignore"), LOCAL_GITIGNORE);
+
+	let cleaned = false;
+	if (cleanup) {
+		await rm(source, { recursive: true, force: true });
+		await removeRegistryProject(homeRoot, slug);
+		cleaned = true;
+	}
+	return { slug, to: "local", from: source, target, copied, cleaned, backup: cleaned ? null : source };
+}
+
+async function relocateToHome(cwd: string, cleanup: boolean): Promise<RelocateResult> {
+	const source = findLocalRoot(cwd);
+	if (!source) throw new Error(`No local board found above: ${resolve(cwd)}`);
+	const local = await readProjectConfig(source).catch(() => null);
+	if (!local) throw new Error(`Local board is missing project.json: ${source}`);
+
+	const slug = local.slug;
+	const repoPath = dirname(source);
+	const homeRoot = getHomeRoot();
+	const target = join(homeRoot, "projects", slug);
+
+	await ensureRootLayout(homeRoot);
+	await ensureProjectLayout(target);
+	const copied = await copyTrees(source, target);
+	const project: ProjectConfig = {
+		slug,
+		repo_path: repoPath,
+		active_goal: local.active_goal,
+		related_projects: local.related_projects ?? [],
+		created: local.created,
+		updated: nowIso(),
+	};
+	await writeProjectConfig(target, project);
+	await upsertRegistryProject(homeRoot, { slug, repo_path: repoPath, project_path: target });
+
+	let cleaned = false;
+	if (cleanup) {
+		await rm(source, { recursive: true, force: true });
+		cleaned = true;
+	}
+	return { slug, to: "home", from: source, target, copied, cleaned, backup: cleaned ? null : source };
+}
+
+async function copyTrees(source: string, target: string): Promise<string[]> {
+	const copied: string[] = [];
+	for (const tree of RELOCATE_TREES) {
+		const from = join(source, tree);
+		if (!existsSync(from)) continue;
+		await copyDirContents(from, join(target, tree));
+		copied.push(tree);
+	}
+	return copied;
+}
+
+async function removeRegistryProject(root: string, slug: string): Promise<void> {
+	const registry = await readRegistry(root);
+	if (!registry.projects[slug]) return;
+	delete registry.projects[slug];
+	await atomicWrite(join(root, "registry.json"), JSON.stringify(registry, null, 2));
 }
 
 async function ensureRootLayout(root: string): Promise<void> {

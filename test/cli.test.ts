@@ -39,6 +39,115 @@ describe("cli", () => {
 		]);
 	});
 
+	test("init --local creates a flat repo board discovered by walking up", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-local-"));
+		const env = noHomeEnv();
+
+		expect(await run(repo, env, ["init", "--local", "--project", "demo"])).toContain(
+			"Initialized demo (local)",
+		);
+
+		// Flat layout in the repo: no projects/<slug> wrapper, no registry, no skills copy.
+		const board = join(repo, ".agent-board");
+		expect(existsSync(join(board, "project.json"))).toBe(true);
+		expect(existsSync(join(board, "goals", "main", "tasks"))).toBe(true);
+		expect(existsSync(join(board, "projects"))).toBe(false);
+		expect(existsSync(join(board, "registry.json"))).toBe(false);
+		expect(existsSync(join(board, "skills"))).toBe(false);
+		expect(existsSync(join(board, ".gitignore"))).toBe(true);
+
+		// project.json stays portable: the machine-specific repo_path is derived, not stored.
+		const project = JSON.parse(await readFile(join(board, "project.json"), "utf-8"));
+		expect(project.slug).toBe("demo");
+		expect(project.repo_path).toBeUndefined();
+
+		// Commands resolve the local board, even from a nested subdirectory.
+		expect(await run(repo, env, ["new", "Add CLI", "--status", "ready"])).toContain("Created add-cli");
+		const sub = join(repo, "src", "deep");
+		await mkdir(sub, { recursive: true });
+		expect(await run(sub, env, ["tasks"])).toContain("add-cli");
+		expect(existsSync(join(board, "goals", "main", "tasks", "add-cli.md"))).toBe(true);
+	});
+
+	test("relocate --to local moves a home board into the repo and cleans up home", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-reloc-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const homeEnv = { ...process.env, AGENT_BOARD_HOME: home };
+
+		await run(repo, homeEnv, ["init", "--project", "demo"]);
+		await run(repo, homeEnv, ["new", "Home Task", "--status", "ready"]);
+
+		const out = await run(repo, homeEnv, ["relocate", "--to", "local", "--cleanup"]);
+		expect(out).toContain("Relocated demo -> local");
+		expect(out).toContain("Source removed.");
+
+		// The task moved into the repo board; the home project and its registry entry are gone.
+		const board = join(repo, ".agent-board");
+		expect(existsSync(join(board, "goals", "main", "tasks", "home-task.md"))).toBe(true);
+		expect(existsSync(join(home, "projects", "demo"))).toBe(false);
+		expect(JSON.parse(await readFile(join(home, "registry.json"), "utf-8")).projects.demo).toBeUndefined();
+
+		// Without the env override, the relocated board is discovered by walking up.
+		expect(await run(repo, noHomeEnv(), ["tasks"])).toContain("home-task");
+	});
+
+	test("init --local anchors the board at the git root, not the subdir", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-local-git-"));
+		await gitInit(repo);
+		const sub = join(repo, "packages", "app");
+		await mkdir(sub, { recursive: true });
+		const env = noHomeEnv();
+
+		expect(await run(sub, env, ["init", "--local", "--project", "demo"])).toContain(
+			"Initialized demo (local)",
+		);
+		// The board lives at the git toplevel even though init ran from a subdirectory.
+		expect(existsSync(join(repo, ".agent-board", "project.json"))).toBe(true);
+		expect(existsSync(join(sub, ".agent-board"))).toBe(false);
+
+		// And it is discovered from the subdir by walking up.
+		expect(await run(sub, env, ["new", "Root Task", "--status", "ready"])).toContain("Created root-task");
+		expect(existsSync(join(repo, ".agent-board", "goals", "main", "tasks", "root-task.md"))).toBe(true);
+	});
+
+	test("skills check confirms bundled docs match the live CLI", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-drift-"));
+		// Pure doc-vs-CLI audit: needs no workspace, touches no home board.
+		expect(await run(cwd, noHomeEnv(), ["skills", "check"])).toContain("No drift");
+	});
+
+	test("web server serves a local board over HTTP", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-web-"));
+		const env = noHomeEnv();
+		await run(repo, env, ["init", "--local", "--project", "webdemo"]);
+		await run(repo, env, ["new", "Web Task", "--status", "ready"]);
+
+		// A real starting port (parsePositiveInt rejects 0); the server falls back to
+		// a free port on collision and prints the actual URL, which the test parses.
+		const proc = Bun.spawn(["bun", cli, "web", "--no-open", "--port", "47352"], {
+			cwd: repo,
+			env,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		try {
+			const url = await waitForWebUrl(proc.stdout as ReadableStream<Uint8Array>);
+			const res = await fetch(`${url}/api/board`);
+			const body = (await res.json()) as {
+				projects: Array<{ slug: string }>;
+				tasks: Array<{ meta: { id: string } }>;
+				current: { project: string };
+			};
+			// The local board is discovered and served with no registry, no env.
+			expect(body.projects.map((p) => p.slug)).toContain("webdemo");
+			expect(body.tasks.map((t) => t.meta.id)).toContain("web-task");
+			expect(body.current.project).toBe("webdemo");
+		} finally {
+			proc.kill();
+			await proc.exited;
+		}
+	});
+
 	test("manages goals, scoped specs, scoped knowledge, links, and plan output", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-cli-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
@@ -750,6 +859,30 @@ async function runFail(
 	]);
 	await proc.exited;
 	return stdout + stderr;
+}
+
+function noHomeEnv(): Record<string, string | undefined> {
+	const env = { ...process.env };
+	delete env.AGENT_BOARD_HOME;
+	return env;
+}
+
+async function waitForWebUrl(stdout: ReadableStream<Uint8Array>): Promise<string> {
+	const reader = stdout.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	try {
+		for (let i = 0; i < 200; i++) {
+			const { value, done } = await reader.read();
+			if (value) buffer += decoder.decode(value, { stream: true });
+			const match = buffer.match(/http:\/\/\S+/);
+			if (match) return match[0];
+			if (done) break;
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	throw new Error(`web server printed no URL: ${buffer}`);
 }
 
 async function gitInit(dir: string): Promise<void> {
