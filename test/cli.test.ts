@@ -148,6 +148,47 @@ describe("cli", () => {
 		}
 	});
 
+	test("nudge adds an idempotent block, preserves content, and removes cleanly", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-nudge-"));
+		await gitInit(repo);
+		const env = noHomeEnv();
+		await writeFile(join(repo, "CLAUDE.md"), "# My Project\n\nExisting notes.\n");
+
+		const out = await run(repo, env, ["nudge"]);
+		expect(out).toContain("CLAUDE.md: updated"); // existing file, block appended
+		expect(out).toContain("AGENTS.md: created"); // new file
+
+		const claude = await readFile(join(repo, "CLAUDE.md"), "utf-8");
+		expect(claude).toContain("# My Project"); // original content preserved
+		expect(claude).toContain("Existing notes.");
+		expect(claude).toContain("## Agent Board");
+		expect(await readFile(join(repo, "AGENTS.md"), "utf-8")).toContain("## Agent Board");
+
+		// Idempotent: a refresh does not duplicate the block.
+		await run(repo, env, ["nudge"]);
+		expect((await readFile(join(repo, "CLAUDE.md"), "utf-8")).match(/agent-board:start/g)?.length).toBe(1);
+
+		// Removal leaves the original content intact.
+		expect(await run(repo, env, ["nudge", "--remove"])).toContain("CLAUDE.md: removed");
+		const removed = await readFile(join(repo, "CLAUDE.md"), "utf-8");
+		expect(removed).not.toContain("agent-board:start");
+		expect(removed).toContain("Existing notes.");
+	});
+
+	test("CLI hints to add the nudge when missing in a repo, then stays quiet", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-hint-"));
+		await gitInit(repo);
+		const env = noHomeEnv();
+		await run(repo, env, ["init", "--local", "--project", "demo"]);
+
+		// status surfaces the tip while CLAUDE.md/AGENTS.md lack the block.
+		expect(await run(repo, env, ["status"])).toContain("run `agent-board nudge`");
+
+		// once the nudge is present, the tip is gone.
+		await run(repo, env, ["nudge"]);
+		expect(await run(repo, env, ["status"])).not.toContain("agent-board nudge");
+	});
+
 	test("manages goals, scoped specs, scoped knowledge, links, and plan output", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-cli-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));

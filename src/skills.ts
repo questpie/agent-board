@@ -35,6 +35,7 @@ Use when controlling agent-board work: goals, specs, task graph, delegation, flo
 - \`agent-board goal new/use\`, \`agent-board spec new\`, \`agent-board knowledge add\`
 - \`agent-board new\`, \`agent-board link <from> --blocks <to>\`, \`agent-board block <task> "<reason>"\`
 - \`agent-board task/spec/knowledge cat|write\`, \`agent-board flow new <name> --template feature|review|fix\`, \`agent-board flow cat|write\`, \`agent-board flow run <name>\`
+- \`agent-board nudge\` when the CLI tips that CLAUDE.md/AGENTS.md don't mention agent-board
 
 ## References
 
@@ -200,6 +201,17 @@ agent-board relocate --to home               # repo -> shared home
 Relocate copies goals/specs/knowledge/flows and rewrites \`project.json\` for the target layout. It keeps the source as a backup unless you pass \`--cleanup\`.
 
 Init is non-destructive and does not create \`.agent\` or project-local skill links. Use \`agent-board skills install\` for global skill links, \`agent-board skills doctor\` to see which runtimes are linked, and \`agent-board skills check\` to confirm these docs still match the CLI.
+
+## Repo Nudge
+
+Board state stays separate from a repo's agent instructions, so a fresh agent may not know the board exists. When a command runs inside a repo whose \`CLAUDE.md\`/\`AGENTS.md\` don't reference agent-board, the CLI prints a one-line tip. Add a managed, idempotent nudge block (other content preserved) so future agents use the board:
+
+\`\`\`sh
+agent-board nudge            # add or refresh the block in CLAUDE.md and AGENTS.md
+agent-board nudge --remove   # remove it
+\`\`\`
+
+The CLI never writes these files on its own — it only hints; you (or an agent that saw the tip) run \`agent-board nudge\`.
 
 Orient fresh projects:
 

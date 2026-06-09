@@ -12,6 +12,7 @@ export interface AgentDocumentMeta {
 	id: string;
 	title: string;
 	kind?: KnowledgeKind | "spec";
+	category?: string;
 	status?: string;
 	created: string;
 	updated: string;
@@ -24,14 +25,15 @@ export interface AgentDocument {
 	body: string;
 }
 
-const SPEC_ORDER = ["id", "title", "status", "created", "updated"];
-const KNOWLEDGE_ORDER = ["id", "title", "kind", "created", "updated"];
+const SPEC_ORDER = ["id", "title", "status", "category", "created", "updated"];
+const KNOWLEDGE_ORDER = ["id", "title", "kind", "category", "created", "updated"];
 const SCOPE_ORDER: OverlayScope[] = ["goal", "project", "global"];
 
 export async function createSpec(
 	workspace: Workspace,
 	title: string,
 	scope: OverlayScope = "project",
+	category?: string,
 ): Promise<AgentDocument> {
 	const dir = overlayDir(workspace, scope, "specs");
 	const id = await uniqueSlug(dir, title);
@@ -43,6 +45,7 @@ export async function createSpec(
 			id,
 			title,
 			status: "draft",
+			category: normalizeCategory(category),
 			created: now,
 			updated: now,
 		},
@@ -57,6 +60,7 @@ export async function createKnowledge(
 	title: string,
 	kind: string,
 	scope: OverlayScope = "project",
+	category?: string,
 ): Promise<AgentDocument> {
 	const normalizedKind = parseKnowledgeKind(kind);
 	const dir = overlayDir(workspace, scope, "knowledge");
@@ -69,6 +73,7 @@ export async function createKnowledge(
 			id,
 			title,
 			kind: normalizedKind,
+			category: normalizeCategory(category),
 			created: now,
 			updated: now,
 		},
@@ -120,6 +125,47 @@ export async function writeKnowledgeBody(
 	body: string,
 ): Promise<AgentDocument> {
 	return writeScopedDocumentBody(workspace, "knowledge", id, "Knowledge", body, KNOWLEDGE_ORDER);
+}
+
+export async function setSpecCategory(
+	workspace: Workspace,
+	id: string,
+	category: string,
+): Promise<AgentDocument> {
+	return setScopedDocumentCategory(workspace, "specs", id, "Spec", category, SPEC_ORDER);
+}
+
+export async function setKnowledgeCategory(
+	workspace: Workspace,
+	id: string,
+	category: string,
+): Promise<AgentDocument> {
+	return setScopedDocumentCategory(workspace, "knowledge", id, "Knowledge", category, KNOWLEDGE_ORDER);
+}
+
+export async function listCategories(
+	workspace: Workspace,
+	kind: "specs" | "knowledge",
+): Promise<string[]> {
+	const docs = await listScopedDocuments(workspace, kind);
+	const categories = new Set<string>();
+	for (const doc of docs) if (doc.meta.category) categories.add(doc.meta.category);
+	return [...categories].sort((a, b) => a.localeCompare(b));
+}
+
+async function setScopedDocumentCategory(
+	workspace: Workspace,
+	kind: "specs" | "knowledge",
+	ref: string,
+	label: string,
+	category: string,
+	order: string[],
+): Promise<AgentDocument> {
+	const doc = await getScopedDocument(workspace, kind, ref, label);
+	doc.meta.category = normalizeCategory(category);
+	doc.meta.updated = nowIso();
+	await writeDocument(doc, order);
+	return doc;
 }
 
 async function readScopedDocuments(
@@ -239,10 +285,16 @@ function normalizeDocumentMeta(
 		id: raw.id,
 		title: raw.title,
 		kind: typeof raw.kind === "string" ? (raw.kind as AgentDocumentMeta["kind"]) : undefined,
+		category: typeof raw.category === "string" && raw.category.trim() ? raw.category.trim() : undefined,
 		status: typeof raw.status === "string" ? raw.status : undefined,
 		created: typeof raw.created === "string" ? raw.created : "",
 		updated: typeof raw.updated === "string" ? raw.updated : "",
 	};
+}
+
+function normalizeCategory(category?: string): string | undefined {
+	const trimmed = category?.trim();
+	return trimmed ? trimmed : undefined;
 }
 
 function capitalize(value: string): string {

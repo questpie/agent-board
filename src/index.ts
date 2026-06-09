@@ -3,13 +3,14 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
-import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, writeKnowledgeBody, writeSpecBody } from "./documents.js";
+import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, setKnowledgeCategory, setSpecCategory, writeKnowledgeBody, writeSpecBody } from "./documents.js";
 import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, relocateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
 import { auditSkillDrift } from "./skills-audit.js";
+import { applyNudge, nudgeStatus } from "./nudge.js";
 import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
 import { startWebServer } from "./web.js";
@@ -38,6 +39,7 @@ program
 			console.log(`Goal: ${workspace.goalSlug}`);
 			console.log(`Repo: ${workspace.repoPath}`);
 			for (const warning of warnings) console.warn(`Warning: ${warning}`);
+			await maybeNudgeHint();
 		});
 	});
 
@@ -80,6 +82,19 @@ program
 			if (result.to === "local") {
 				console.log("Next: commit .agent-board/ with the repo — other clones pick it up automatically, no env needed.");
 			}
+		});
+	});
+
+program
+	.command("nudge")
+	.description("Add or refresh the agent-board usage nudge in CLAUDE.md and AGENTS.md")
+	.option("--remove", "Remove the managed nudge block instead of adding it")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ remove?: boolean }>(options);
+			const { root, results } = await applyNudge(process.cwd(), { remove: opts.remove ?? false });
+			console.log(`Nudge target: ${root}`);
+			for (const result of results) console.log(`  ${result.file}: ${result.action}`);
 		});
 	});
 
@@ -203,6 +218,7 @@ program
 			if (active.length) console.log(`\nIn progress:\n${active.map((task) => `- ${task.meta.id}: ${task.meta.title}`).join("\n")}`);
 			if (blocked.length) console.log(`\nBlocked:\n${blocked.map((task) => `- ${task.meta.id}: ${task.meta.blocked_by.at(-1) ?? task.meta.title}`).join("\n")}`);
 			if (next) console.log(`\nNext: ${next.meta.id} (${next.meta.priority}) ${next.meta.title}`);
+			await maybeNudgeHint();
 		});
 	});
 
@@ -287,12 +303,13 @@ spec
 	.command("new")
 	.argument("<title>")
 	.option("--scope <scope>", "global, project, or goal", "project")
+	.option("--category <name>", "Group the spec under a category")
 	.description("Create a spec")
 	.action(async (title, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = parseScope(options.scope);
-			const doc = await createSpec(workspace, title, scope);
+			const doc = await createSpec(workspace, title, scope, options.category);
 			console.log(`Created spec ${scope}/${doc.meta.id}`);
 		});
 	});
@@ -300,27 +317,44 @@ spec
 spec
 	.command("list")
 	.option("--scope <scope>", "global, project, or goal")
+	.option("--category <name>", "Filter by category")
 	.description("List specs")
 	.action(async (options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = options.scope ? parseScope(options.scope) : undefined;
-			const specs = await listSpecs(workspace, scope);
+			const specs = (await listSpecs(workspace, scope)).filter(
+				(doc) => !options.category || doc.meta.category === options.category,
+			);
 			if (specs.length === 0) {
 				console.log("No specs.");
 				return;
 			}
 			console.log(
 				table([
-					["Scope", "ID", "Status", "Title"],
+					["Scope", "ID", "Category", "Status", "Title"],
 					...specs.map((doc) => [
 						doc.scope,
 						doc.meta.id,
+						doc.meta.category ?? "-",
 						doc.meta.status ?? "-",
 						doc.meta.title,
 					]),
 				]),
 			);
+		});
+	});
+
+spec
+	.command("categorize")
+	.argument("<spec-id>")
+	.argument("<category>")
+	.description("Set or change a spec category")
+	.action(async (id, category) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await setSpecCategory(workspace, id, category);
+			console.log(`Categorized spec ${doc.scope}/${doc.meta.id} -> ${doc.meta.category ?? "(none)"}`);
 		});
 	});
 
@@ -371,12 +405,13 @@ knowledge
 	.argument("<title>")
 	.option("--kind <kind>", "Knowledge kind: decision, note, gotcha", "note")
 	.option("--scope <scope>", "global, project, or goal", "project")
+	.option("--category <name>", "Group the note under a category")
 	.description("Add a knowledge note")
 	.action(async (title, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = parseScope(options.scope);
-			const doc = await createKnowledge(workspace, title, options.kind, scope);
+			const doc = await createKnowledge(workspace, title, options.kind, scope, options.category);
 			console.log(`Created knowledge ${scope}/${doc.meta.id}`);
 		});
 	});
@@ -384,27 +419,44 @@ knowledge
 knowledge
 	.command("list")
 	.option("--scope <scope>", "global, project, or goal")
+	.option("--category <name>", "Filter by category")
 	.description("List knowledge notes")
 	.action(async (options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = options.scope ? parseScope(options.scope) : undefined;
-			const docs = await listKnowledge(workspace, scope);
+			const docs = (await listKnowledge(workspace, scope)).filter(
+				(doc) => !options.category || doc.meta.category === options.category,
+			);
 			if (docs.length === 0) {
 				console.log("No knowledge.");
 				return;
 			}
 			console.log(
 				table([
-					["Scope", "ID", "Kind", "Title"],
+					["Scope", "ID", "Kind", "Category", "Title"],
 					...docs.map((doc) => [
 						doc.scope,
 						doc.meta.id,
 						doc.meta.kind ?? "note",
+						doc.meta.category ?? "-",
 						doc.meta.title,
 					]),
 				]),
 			);
+		});
+	});
+
+knowledge
+	.command("categorize")
+	.argument("<knowledge-id>")
+	.argument("<category>")
+	.description("Set or change a knowledge category")
+	.action(async (id, category) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await setKnowledgeCategory(workspace, id, category);
+			console.log(`Categorized knowledge ${doc.scope}/${doc.meta.id} -> ${doc.meta.category ?? "(none)"}`);
 		});
 	});
 
@@ -906,6 +958,23 @@ function resolveInitMode(opts: { local?: boolean; global?: boolean }): Workspace
 		if (answer?.trim() === "1") return "local";
 	}
 	return "home";
+}
+
+// Non-fatal hint: when running inside a repo whose CLAUDE.md/AGENTS.md don't
+// mention agent-board, tell the agent to run `agent-board nudge`. We never write
+// the files automatically — the agent does, after seeing this.
+async function maybeNudgeHint(): Promise<void> {
+	try {
+		const status = await nudgeStatus(process.cwd());
+		if (!status.isRepo || status.missing.length === 0) return;
+		const files = status.missing.join(" and ");
+		const verb = status.missing.length > 1 ? "don't" : "doesn't";
+		console.error(
+			`Tip: ${files} ${verb} mention agent-board — run \`agent-board nudge\` so agents use the board for tasks, specs, and knowledge.`,
+		);
+	} catch {
+		// A hint must never break the command.
+	}
 }
 
 async function readInputSource(source: string): Promise<string> {

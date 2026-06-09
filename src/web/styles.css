@@ -832,6 +832,76 @@ select.control:focus {
 	font-size: 15px;
 }
 
+.eyebrow {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--foreground-subtle);
+}
+.goal-header {
+	background: var(--card);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-surface);
+	padding: 18px 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+.gh-top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+.gh-title {
+	margin: 5px 0 0;
+	font-size: 21px;
+	font-weight: 600;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+}
+.gh-next {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-control);
+	background: var(--surface-low);
+	cursor: pointer;
+	transition: border-color var(--motion-base) var(--ease-standard);
+}
+.gh-next:hover {
+	border-color: var(--border);
+}
+.gh-next .eyebrow {
+	flex: none;
+}
+.gh-next .sticon {
+	flex: none;
+}
+.gh-next-title {
+	flex: 1;
+	font-weight: 500;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.stat.clickable {
+	cursor: pointer;
+	transition: border-color var(--motion-base) var(--ease-standard), background-color var(--motion-base) var(--ease-standard);
+}
+.stat.clickable:hover {
+	border-color: var(--border);
+	background: var(--surface-low);
+}
+.badge.cat svg {
+	opacity: 0.75;
+}
+
 /* ---------- Goals ---------- */
 .goals-grid {
 	display: grid;

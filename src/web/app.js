@@ -71,6 +71,15 @@ function PriorityBadge({ priority }) {
 	if (!priority || priority === "normal") return null;
 	return html`<span class=${cls("badge", `prio-${priority}`)}>${priority}</span>`;
 }
+function CatBadge({ category }) {
+	if (!category) return null;
+	return html`<span class="badge cat" title="category">
+		<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+			stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+			<path d="M3 11.5 11.5 3H20a1 1 0 0 1 1 1v8.5L12.5 21a2 2 0 0 1-2.8 0l-6.7-6.7a2 2 0 0 1 0-2.8Z" />
+			<circle cx="7.5" cy="7.5" r="1.4" fill="currentColor" stroke="none" />
+		</svg>${category}</span>`;
+}
 function Markdown({ source }) {
 	const htmlStr = useMemo(() => marked.parse(source || ""), [source]);
 	return html`<div class="markdown" dangerouslySetInnerHTML=${{ __html: htmlStr }} />`;
@@ -149,68 +158,125 @@ function Sidebar({ board, tab, setTab, sel, setSel, onRefresh, spinning }) {
 
 /* ---------- Overview ---------- */
 function Overview({ board, go }) {
+	const tasks = board.tasks;
 	const counts = {};
 	for (const s of STATUS_ORDER) counts[s] = 0;
-	for (const t of board.tasks) counts[t.meta.status] = (counts[t.meta.status] ?? 0) + 1;
-	const next =
-		board.tasks.find((t) => t.meta.status === "ready") ||
-		board.tasks.find((t) => t.meta.status === "todo");
-	const inProgress = board.tasks.filter((t) => t.meta.status === "in_progress");
-	const blocked = board.tasks.filter((t) => t.meta.status === "blocked");
-	const runs = board.runs.slice(0, 6);
+	for (const t of tasks) counts[t.meta.status] = (counts[t.meta.status] ?? 0) + 1;
+	const total = tasks.length;
+	const done = counts.done;
+	const pct = total ? Math.round((done / total) * 100) : 0;
+	const segs = STATUS_ORDER.filter((s) => counts[s] > 0);
+	const goal = board.goals.find((g) => g.id === board.current.goal);
+	const byStatus = (s) => tasks.filter((t) => t.meta.status === s);
+	const next = byStatus("ready")[0] || byStatus("todo")[0];
+	const activeRuns = board.runs.filter((r) => r.active);
+
+	const resources = [
+		["tasks", "Tasks", total],
+		["specs", "Specs", board.specs.length],
+		["knowledge", "Knowledge", board.knowledge.length],
+		["flows", "Flow runs", board.runs.length],
+	].filter(([, , n]) => n > 0);
+
+	const taskCards = [
+		["in_progress", "In progress"],
+		["blocked", "Blocked"],
+		["review", "In review"],
+		["ready", "Ready"],
+	]
+		.map(([s, label]) => ({ s, label, items: byStatus(s) }))
+		.filter((c) => c.items.length);
+
+	const empty = !total && !board.specs.length && !board.knowledge.length && !board.runs.length;
 
 	const TaskRowMini = (t) => html`<div key=${t.meta.id} class="card-row" onClick=${() => go("tasks", t.meta.id)}>
-		<${StatusBadge} status=${t.meta.status} />
+		<${StatusIcon} status=${t.meta.status} size=${14} />
 		<span class="t">${t.meta.title}</span>
-		<span class="i">${t.meta.assignee || ""}</span>
+		${t.meta.assignee ? html`<span class="i">${t.meta.assignee}</span>` : null}
+		<${PriorityBadge} priority=${t.meta.priority} />
 	</div>`;
 
+	const capped = (items) => {
+		const shown = items.slice(0, 7);
+		return html`${shown.map(TaskRowMini)}
+			${items.length > shown.length
+				? html`<div class="card-row muted" onClick=${() => go("tasks", null)}>+ ${items.length - shown.length} more</div>`
+				: null}`;
+	};
+
 	return html`<div class="overview">
-		<div class="stat-grid">
-			${STATUS_ORDER.map(
-				(s) => html`<div key=${s} class="stat">
-					<div class="n">${counts[s]}</div>
-					<div class="l"><${StatusIcon} status=${s} size=${13} />${s.replace("_", " ")}</div>
-				</div>`,
-			)}
+		<div class="goal-header">
+			<div class="gh-top">
+				<div class="gh-id">
+					<div class="eyebrow">Goal</div>
+					<h2 class="gh-title">${goal?.title || board.current.goal}</h2>
+				</div>
+				${activeRuns.length
+					? html`<span class="live"><span class="pulse" />${activeRuns.length} running</span>`
+					: null}
+			</div>
+			${total
+				? html`<div class="progress">
+							${segs.map((s) => html`<span key=${s} style=${{ width: `${(counts[s] / total) * 100}%`, background: `var(--st-${s})` }} title=${`${s.replace("_", " ")}: ${counts[s]}`} />`)}
+						</div>
+						<div class="goal-stats">
+							<span class="goal-pct">${pct}%</span>
+							<span class="muted">${done}/${total} done</span>
+							<span class="spacer" />
+							${segs.map(
+								(s) => html`<span key=${s} class="gchip" title=${s.replace("_", " ")}>
+									<${StatusIcon} status=${s} size=${12} />${counts[s]}</span>`,
+							)}
+						</div>`
+				: html`<div class="muted">No tasks in this goal yet.</div>`}
+			${next && !byStatus("in_progress").length
+				? html`<div class="gh-next" onClick=${() => go("tasks", next.meta.id)}>
+						<span class="eyebrow">Next up</span>
+						<${StatusIcon} status=${next.meta.status} size=${14} />
+						<span class="gh-next-title">${next.meta.title}</span>
+						<${PriorityBadge} priority=${next.meta.priority} />
+					</div>`
+				: null}
 		</div>
 
-		${next
-			? html`<div>
-					<div class="section-label">Next up</div>
-					<div class="next-task" onClick=${() => go("tasks", next.meta.id)}>
-						<div class="run-head">
-							<${StatusBadge} status=${next.meta.status} />
-							<${PriorityBadge} priority=${next.meta.priority} />
-						</div>
-						<div class="nt-title">${next.meta.title}</div>
-						<div class="detail-id">${next.meta.id}</div>
-					</div>
+		${empty
+			? html`<div class="empty"><div class="big">This goal is empty.</div>Create tasks, specs, or knowledge to see them here.</div>`
+			: null}
+
+		${resources.length
+			? html`<div class="stat-grid">
+					${resources.map(
+						([tab, label, n]) => html`<div key=${tab} class="stat clickable" onClick=${() => go(tab, null)}>
+							<div class="n">${n}</div>
+							<div class="l">${label}</div>
+						</div>`,
+					)}
 				</div>`
 			: null}
 
-		<div class="cards">
-			<div class="card">
-				<h3>In progress · ${inProgress.length}</h3>
-				${inProgress.length ? inProgress.map(TaskRowMini) : html`<div class="muted">Nothing in progress.</div>`}
-				${blocked.length
-					? html`<h3 style=${{ marginTop: "6px" }}>Blocked · ${blocked.length}</h3>${blocked.map(TaskRowMini)}`
-					: null}
-			</div>
-			<div class="card">
-				<h3>Recent flow runs · ${board.runs.length}</h3>
-				${runs.length
-					? runs.map(
-							(r) => html`<div key=${r.id} class="card-row" onClick=${() => go("flows", r.id)}>
-								<span class="t">${r.id}</span>
-								${r.active
-									? html`<span class="live"><span class="pulse" />live</span>`
-									: html`<span class="muted">${r.agents} agents</span>`}
-							</div>`,
-						)
-					: html`<div class="muted">No flow runs yet.</div>`}
-			</div>
-		</div>
+		${taskCards.length || board.runs.length
+			? html`<div class="cards">
+					${taskCards.map(
+						(c) => html`<div key=${c.s} class="card">
+							<h3><${StatusIcon} status=${c.s} size=${13} /> ${c.label} · ${c.items.length}</h3>
+							${capped(c.items)}
+						</div>`,
+					)}
+					${board.runs.length
+						? html`<div class="card">
+								<h3>Flow runs · ${board.runs.length}</h3>
+								${board.runs.slice(0, 6).map(
+									(r) => html`<div key=${r.id} class="card-row" onClick=${() => go("flows", r.id)}>
+										<span class="t">${r.id}</span>
+										${r.active
+											? html`<span class="live"><span class="pulse" />live</span>`
+											: html`<span class="muted">${r.agents} agents</span>`}
+									</div>`,
+								)}
+							</div>`
+						: null}
+				</div>`
+			: null}
 	</div>`;
 }
 
@@ -358,19 +424,52 @@ function TaskDetail({ board, task, setSelId, go }) {
 }
 
 /* ---------- Docs (specs / knowledge) ---------- */
+const UNCATEGORIZED = " uncat";
 function DocsTab({ items, kind, selId, setSelId }) {
 	const [query, setQuery] = useState("");
+	const [cat, setCat] = useState(null);
+
+	const categories = useMemo(() => {
+		const map = new Map();
+		let uncategorized = 0;
+		for (const d of items) {
+			if (d.meta.category) map.set(d.meta.category, (map.get(d.meta.category) ?? 0) + 1);
+			else uncategorized++;
+		}
+		return { list: [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])), uncategorized };
+	}, [items]);
+
 	const list = items.filter((d) => {
-		if (!query) return true;
-		const q = query.toLowerCase();
-		return d.meta.title.toLowerCase().includes(q) || d.meta.id.toLowerCase().includes(q);
+		if (cat === UNCATEGORIZED && d.meta.category) return false;
+		if (cat && cat !== UNCATEGORIZED && d.meta.category !== cat) return false;
+		if (query) {
+			const q = query.toLowerCase();
+			return (
+				d.meta.title.toLowerCase().includes(q) ||
+				d.meta.id.toLowerCase().includes(q) ||
+				(d.meta.category || "").toLowerCase().includes(q)
+			);
+		}
+		return true;
 	});
 	const selected = items.find((d) => d.meta.id === selId);
+
 	return html`<div class="split">
 		<div class="list-pane">
 			<div class="list-tools">
 				<input class="search" placeholder=${`Search ${kind}…`} value=${query}
 					onInput=${(e) => setQuery(e.target.value)} />
+				${categories.list.length
+					? html`<div class="filters">
+							<button class=${cls("filter", !cat && "on")} onClick=${() => setCat(null)}>All ${items.length}</button>
+							${categories.list.map(
+								([name, n]) => html`<button key=${name} class=${cls("filter", cat === name && "on")} onClick=${() => setCat(name)}>${name} ${n}</button>`,
+							)}
+							${categories.uncategorized
+								? html`<button class=${cls("filter", cat === UNCATEGORIZED && "on")} onClick=${() => setCat(UNCATEGORIZED)}>uncategorized ${categories.uncategorized}</button>`
+								: null}
+						</div>`
+					: null}
 			</div>
 			<div class="rows">
 				${list.map(
@@ -380,6 +479,7 @@ function DocsTab({ items, kind, selId, setSelId }) {
 						<div class="row-meta">
 							<span class="badge scope">${d.scope}</span>
 							${d.meta.kind && kind === "knowledge" ? html`<span class="badge kind">${d.meta.kind}</span>` : null}
+							<${CatBadge} category=${d.meta.category} />
 							${d.meta.status ? html`<span class="badge">${d.meta.status}</span>` : null}
 							<span class="row-id">${d.meta.id}</span>
 						</div>
@@ -395,6 +495,7 @@ function DocsTab({ items, kind, selId, setSelId }) {
 							<div class="detail-badges">
 								<span class="badge scope">${selected.scope}</span>
 								${selected.meta.kind ? html`<span class="badge kind">${selected.meta.kind}</span>` : null}
+								<${CatBadge} category=${selected.meta.category} />
 								${selected.meta.status ? html`<span class="badge">${selected.meta.status}</span>` : null}
 							</div>
 							<h2>${selected.meta.title}</h2>
@@ -416,13 +517,13 @@ function FlowsTab({ board, sel, selRun, setSelRun, selFlow, setSelFlow, onLiveTi
 			<button class=${cls("subtab", sub === "scripts" && "on")} onClick=${() => setSub("scripts")}>Scripts · ${board.flows.length}</button>
 		</div>
 		${sub === "runs"
-			? html`<div class="split" style=${{ height: "calc(100vh - 180px)", border: "1px solid var(--border-soft)", borderRadius: "12px", overflow: "hidden" }}>
+			? html`<div class="split" style=${{ height: "calc(100vh - 180px)", border: "1px solid var(--border-subtle)", borderRadius: "12px", overflow: "hidden" }}>
 					<div class="list-pane">
 						<div class="rows" style=${{ paddingTop: "10px" }}>
 							${board.runs.length
 								? board.runs.map(
 										(r) => html`<div key=${r.id} class=${cls("row", r.id === selRun && "sel")} onClick=${() => setSelRun(r.id)}>
-											<div class="row-top"><span class="row-title" style=${{ fontFamily: "var(--mono)", fontSize: "12.5px" }}>${r.id}</span></div>
+											<div class="row-top"><span class="row-title" style=${{ fontFamily: "var(--font-mono)", fontSize: "12.5px" }}>${r.id}</span></div>
 											<div class="row-meta">
 												${r.active
 													? html`<span class="live"><span class="pulse" />live</span>`
@@ -440,7 +541,7 @@ function FlowsTab({ board, sel, selRun, setSelRun, selFlow, setSelFlow, onLiveTi
 							: html`<div class="placeholder">Select a run.</div>`}
 					</div>
 				</div>`
-			: html`<div class="split" style=${{ height: "calc(100vh - 180px)", border: "1px solid var(--border-soft)", borderRadius: "12px", overflow: "hidden" }}>
+			: html`<div class="split" style=${{ height: "calc(100vh - 180px)", border: "1px solid var(--border-subtle)", borderRadius: "12px", overflow: "hidden" }}>
 					<div class="list-pane">
 						<div class="rows" style=${{ paddingTop: "10px" }}>
 							${board.flows.length
@@ -472,7 +573,7 @@ function FlowScript({ sel, name }) {
 	if (error) return html`<div class="error-banner">${error}</div>`;
 	if (body == null) return html`<div class="placeholder">Loading…</div>`;
 	return html`<article>
-		<div class="detail-head"><h2 style=${{ fontFamily: "var(--mono)", fontSize: "18px" }}>${name}</h2></div>
+		<div class="detail-head"><h2 style=${{ fontFamily: "var(--font-mono)", fontSize: "18px" }}>${name}</h2></div>
 		<${Markdown} source=${"```js\n" + body + "\n```"} />
 	</article>`;
 }
@@ -511,7 +612,7 @@ function RunDetail({ sel, runId, onLiveTick }) {
 	return html`<article>
 		<div class="detail-head">
 			<div class="run-head">
-				<h2 style=${{ fontFamily: "var(--mono)", fontSize: "17px" }}>${run.id}</h2>
+				<h2 style=${{ fontFamily: "var(--font-mono)", fontSize: "17px" }}>${run.id}</h2>
 				${live ? html`<span class="live"><span class="pulse" />live</span>` : null}
 			</div>
 		</div>
@@ -523,7 +624,7 @@ function RunDetail({ sel, runId, onLiveTick }) {
 
 		${run.summary
 			? html`<div class="section-label">Summary</div><${Markdown} source=${run.summary} />`
-			: html`<div class="muted" style=${{ marginTop: "20px" }}>No summary yet — run still in progress or stopped.</div>`}
+			: html`<div class="muted" style=${{ marginTop: "20px" }}>No summary yet. The run is still in progress or stopped.</div>`}
 
 		<div class="section-label">Timeline</div>
 		<div class="timeline">
@@ -571,16 +672,26 @@ function AgentItem({ sel, runId, agent, files }) {
 }
 
 /* ---------- App root ---------- */
+const TABS = ["overview", "goals", "tasks", "specs", "knowledge", "flows"];
+function readHash() {
+	const raw = (typeof location !== "undefined" ? location.hash : "").replace(/^#/, "");
+	const slash = raw.indexOf("/");
+	const tab = slash === -1 ? raw : raw.slice(0, slash);
+	const id = slash === -1 ? null : decodeURIComponent(raw.slice(slash + 1)) || null;
+	return { tab: TABS.includes(tab) ? tab : "overview", id };
+}
+
 function App() {
+	const init = readHash();
 	const [board, setBoard] = useState(null);
 	const [error, setError] = useState(null);
 	const [spinning, setSpinning] = useState(false);
 	const [sel, setSelState] = useState({ project: undefined, goal: undefined });
-	const [tab, setTab] = useState("overview");
-	const [selTask, setSelTask] = useState(null);
-	const [selSpec, setSelSpec] = useState(null);
-	const [selKnow, setSelKnow] = useState(null);
-	const [selRun, setSelRun] = useState(null);
+	const [tab, setTab] = useState(init.tab);
+	const [selTask, setSelTask] = useState(init.tab === "tasks" ? init.id : null);
+	const [selSpec, setSelSpec] = useState(init.tab === "specs" ? init.id : null);
+	const [selKnow, setSelKnow] = useState(init.tab === "knowledge" ? init.id : null);
+	const [selRun, setSelRun] = useState(init.tab === "flows" ? init.id : null);
 	const [selFlow, setSelFlow] = useState(null);
 	const selRef = useRef(sel);
 	selRef.current = sel;
@@ -601,6 +712,12 @@ function App() {
 	useEffect(() => {
 		load(sel, false);
 	}, [sel, load]);
+
+	useEffect(() => {
+		const id = tab === "tasks" ? selTask : tab === "specs" ? selSpec : tab === "knowledge" ? selKnow : tab === "flows" ? selRun : null;
+		const hash = id ? `#${tab}/${encodeURIComponent(id)}` : `#${tab}`;
+		if (typeof history !== "undefined") history.replaceState(null, "", hash);
+	}, [tab, selTask, selSpec, selKnow, selRun]);
 
 	const setSel = useCallback((updater) => {
 		setSelState((prev) => {
