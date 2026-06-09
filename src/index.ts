@@ -9,7 +9,7 @@ import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, relocateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
-import { auditSkillDrift } from "./skills-audit.js";
+import { auditSkillDrift, collectRepoDocs } from "./skills-audit.js";
 import { applyNudge, nudgeStatus } from "./nudge.js";
 import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
@@ -854,18 +854,18 @@ skills
 
 skills
 	.command("check")
-	.description("Check that bundled skill docs still match the live CLI (drift guard)")
+	.description("Check that bundled skill docs and repo docs (README, docs/*.md) still match the live CLI (drift guard)")
 	.action(async () => {
 		await main(async () => {
-			const issues = auditSkillDrift(program);
+			const issues = auditSkillDrift(program, collectRepoDocs());
 			if (issues.length === 0) {
-				console.log("No drift: skill docs match the CLI.");
+				console.log("No drift: skill docs and repo docs match the CLI.");
 				return;
 			}
 			for (const issue of issues) {
 				console.error(`[${issue.source}] ${issue.kind}: ${issue.token}  (in "${issue.invocation}")`);
 			}
-			throw new Error(`Found ${issues.length} skill/CLI drift issue(s). Update the docs in src/skills.ts.`);
+			throw new Error(`Found ${issues.length} doc/CLI drift issue(s). Update src/skills.ts or the repo docs.`);
 		});
 	});
 

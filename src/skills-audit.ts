@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import {
 	configSkillReadme,
@@ -44,15 +47,41 @@ const SKILL_DOCS: ReadonlyArray<{ source: string; text: string }> = [
 	{ source: "references/review-workflow.md", text: reviewWorkflowSkillReadme },
 ];
 
+// User-facing repo docs (README.md plus top-level docs/*.md) get the same
+// drift guard as the bundled skill docs. They are not shipped to npm
+// ("files": ["src"]), so an installed CLI finds nothing here and audits only
+// the bundled strings. docs/internal/ holds historical material (RFCs,
+// research notes) and is deliberately excluded by the non-recursive listing.
+export function collectRepoDocs(): ReadonlyArray<{ source: string; text: string }> {
+	const root = fileURLToPath(new URL("..", import.meta.url));
+	const docs: Array<{ source: string; text: string }> = [];
+	const readme = join(root, "README.md");
+	if (existsSync(readme)) docs.push({ source: "README.md", text: readFileSync(readme, "utf8") });
+	const docsDir = join(root, "docs");
+	if (existsSync(docsDir)) {
+		const names = readdirSync(docsDir, { withFileTypes: true })
+			.filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+			.map((entry) => entry.name)
+			.sort();
+		for (const name of names) {
+			docs.push({ source: `docs/${name}`, text: readFileSync(join(docsDir, name), "utf8") });
+		}
+	}
+	return docs;
+}
+
 // Validate that every `agent-board ...` command and flag referenced in the
 // bundled skill docs still exists in the live CLI. The commander program is the
 // single source of truth, so a renamed/removed command or flag surfaces here as
 // drift instead of silently misleading an agent that follows the skill.
-export function auditSkillDrift(program: Command): DriftIssue[] {
+export function auditSkillDrift(
+	program: Command,
+	extraDocs: ReadonlyArray<{ source: string; text: string }> = [],
+): DriftIssue[] {
 	const surface = collectCliSurface(program);
 	const issues: DriftIssue[] = [];
 	const seen = new Set<string>();
-	for (const doc of SKILL_DOCS) {
+	for (const doc of [...SKILL_DOCS, ...extraDocs]) {
 		for (const issue of driftInText(doc.text, doc.source, surface)) {
 			const key = `${issue.source}|${issue.kind}|${issue.token}|${issue.invocation}`;
 			if (seen.has(key)) continue;

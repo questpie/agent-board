@@ -1,8 +1,14 @@
 # agent-board
 
+[![npm](https://img.shields.io/npm/v/%40questpie%2Fagent-board)](https://www.npmjs.com/package/@questpie/agent-board)
+[![CI](https://github.com/questpie/agent-board/actions/workflows/ci.yml/badge.svg)](https://github.com/questpie/agent-board/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Local control plane for coding agents.
 
 `agent-board` gives Codex, Claude Code, Cursor, and similar agents a shared Markdown task board plus a small CLI contract. Humans can keep talking in natural language; controller agents use the CLI to plan goals, split tasks, delegate workers, run flow scripts, and record evidence.
+
+![Board overview in the web viewer: goal progress, tasks, and specs](docs/images/web/overview.png)
 
 ## Why
 
@@ -50,7 +56,7 @@ agent-board skills doctor
 agent-board skills check
 ```
 
-`skills check` is a drift guard: it fails if a skill doc references a command or flag the CLI no longer has.
+`skills check` is a drift guard: it fails if a skill doc — or, in a repo checkout, this README or any `docs/*.md` — references a command or flag the CLI no longer has.
 
 ## 60-Second Quickstart
 
@@ -95,6 +101,8 @@ The split keeps hot skill context small: controllers do not carry worker impleme
 
 `agent-board flow` is agent-facing. The human describes desired work in natural language; the controller agent can create and edit a workflow script, summarize the phases, then run it after approval or explicit go-ahead.
 
+Flows call no model API directly. Each agent in a flow is a locally installed coding agent spawned over the Agent Client Protocol (via [spawn-agent](https://www.npmjs.com/package/spawn-agent)). Pick it with `--runtime codex|claude|opencode` (default `codex`); the matching CLI must be installed and logged in on your machine — flows reuse its auth, no extra API keys. See [Flows: Prerequisites](docs/flows.md#prerequisites).
+
 Quick read-only fan-out:
 
 ```sh
@@ -109,6 +117,7 @@ agent-board flow cat audit
 agent-board flow write audit --from ./audit-flow.mjs
 agent-board flow run audit --input "Audit deploy pipeline" --task deploy-audit
 agent-board flow show <run-id>
+agent-board flow watch <run-id>     # live per-agent progress while a run executes
 ```
 
 Templates: `default`, `feature`, `review`, `fix`.
@@ -143,8 +152,6 @@ agent-board web --no-open       # do not open a browser
 ```
 
 Browse goals, tasks, specs, knowledge, and flow runs from any registered project. Switch project and goal from the sidebar; the Overview adapts to each goal and hides empty sections.
-
-![Overview](docs/images/web/overview.png)
 
 - **Goals** show progress and a status breakdown at a glance. Selecting one opens its Overview.
 - **Tasks** render the full graph: status, priority, dependencies, verify evidence, and the Markdown body.
@@ -185,7 +192,8 @@ Read the deeper docs:
 - [Flows](docs/flows.md)
 - [Storage Drivers](docs/storage-adapters.md)
 - [CLI Reference](docs/cli-reference.md)
-- [Execution Contract RFC](docs/rfc-execution-contract.md)
+- [Changelog](CHANGELOG.md)
+- [Execution Contract RFC](docs/internal/rfc-execution-contract.md) (design history)
 
 ## Development
 
@@ -193,7 +201,10 @@ Read the deeper docs:
 bun install
 bun run check-types
 bun test
+bun src/index.ts skills check
 ```
+
+CI runs the same four checks on every push and pull request.
 
 The tests cover frontmatter parsing, task graph links, overlays, git state detection, verify gates, claim guards, atomic writes, concurrent-claim locking, global skill install, related project planning, migration, mocked flow runs, local/home boards, board relocation, skill/CLI drift detection, and the web viewer.
 

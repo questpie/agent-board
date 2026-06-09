@@ -147,16 +147,42 @@ describe("verify", () => {
 		expect(evidence).not.toContain("hello-pass\n```");
 	});
 
-	test("kills a hanging command on timeout and records it as failure", async () => {
-		process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS = "200";
-		try {
-			const results = await runVerify(process.cwd(), ["sleep 30"]);
-			expect(results[0]!.exitCode).toBe(124);
-			expect(results[0]!.output).toContain("timed out after");
-		} finally {
-			delete process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS;
-		}
-	});
+	test(
+		"kills a hanging command on timeout and records it as failure",
+		async () => {
+			process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS = "200";
+			try {
+				const results = await runVerify(process.cwd(), ["sleep 30"]);
+				expect(results[0]!.exitCode).toBe(124);
+				expect(results[0]!.output).toContain("timed out after");
+			} finally {
+				delete process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS;
+			}
+		},
+		// Headroom over bun's 5s default: kill + bounded drain is ~1.2s worst
+		// case, but CI runners spawn slowly.
+		15_000,
+	);
+
+	test(
+		"timeout evidence does not hang when a child keeps the pipes open",
+		async () => {
+			process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS = "200";
+			try {
+				const started = Date.now();
+				// The backgrounded sleep inherits stdout/stderr and outlives the
+				// killed sh, so stream EOF never arrives; only the bounded drain
+				// lets runVerify return.
+				const results = await runVerify(process.cwd(), ["sleep 30 & sleep 30"]);
+				expect(results[0]!.exitCode).toBe(124);
+				expect(results[0]!.output).toContain("timed out after");
+				expect(Date.now() - started).toBeLessThan(10_000);
+			} finally {
+				delete process.env.AGENT_BOARD_VERIFY_TIMEOUT_MS;
+			}
+		},
+		15_000,
+	);
 });
 
 describe("flow agent mode", () => {

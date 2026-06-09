@@ -27,7 +27,7 @@ Use environment or CLI overrides when concurrent agents must not depend on share
 
 ```sh
 AGENT_BOARD_PROJECT=my-project AGENT_BOARD_GOAL=cli-mvp agent-board status
-agent-board --project my-project --goal cli-mvp status
+agent-board status --project my-project --goal cli-mvp
 ```
 
 ## Tasks
@@ -90,9 +90,15 @@ agent-board flow new <name> [--template default|feature|review|fix] [--force]
 agent-board flow list
 agent-board flow cat <name>
 agent-board flow write <name> --from <file|->
-agent-board flow run <name-or-path-or-goal> [--input <text>] [--task <task-id>] [--runtime codex] [--agents <n>] [--concurrency <n>] [--verbose]
+agent-board flow run <name-or-path-or-goal> [--input <text>] [--task <task-id>] [--runtime codex|claude|opencode] [--agents <n>] [--concurrency <n>] [--verbose]
 agent-board flow show <run-id>
+agent-board flow watch <run-id>
 ```
+
+`flow run` spawns locally installed coding agents; the chosen runtime's CLI must
+be installed and logged in — see [Flows: Prerequisites](flows.md#prerequisites).
+`flow watch` tails a run's `events.jsonl` and renders live per-agent progress;
+it is read-only and exits when the run finishes or on Ctrl-C.
 
 `flow new` prints the template, script path, and next action for the controller
 agent. Templates are simple editable JavaScript scripts:
