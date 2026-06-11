@@ -9,7 +9,7 @@ import { atomicWrite, findWorktreeMainRoot } from "../src/utils.js";
 import { resolveWorkspace } from "../src/workspace.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
-import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseCodexMcpMode, parseDurationMs, parseStructuredOutput, prepareCodexFlowEnvironment, resolveCodexAcpBin, runLimited } from "../src/flow.js";
+import { DEFAULT_FLOW_AGENT_MODE, DEFAULT_FLOW_AGENT_TIMEOUT_MS, modeToPermission, parseCodexMcpMode, parseDurationMs, parseStructuredOutput, prepareCodexFlowEnvironment, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 import { Command } from "commander";
 import { findDrift } from "../src/skills-audit.js";
@@ -195,9 +195,11 @@ describe("flow agent mode", () => {
 	});
 
 	test("parses activity watchdog durations", () => {
+		expect(DEFAULT_FLOW_AGENT_TIMEOUT_MS).toBe(7_200_000);
 		expect(parseDurationMs("250ms", "--agent-timeout")).toBe(250);
 		expect(parseDurationMs("180s", "--agent-timeout")).toBe(180_000);
 		expect(parseDurationMs("60m", "--agent-timeout")).toBe(3_600_000);
+		expect(parseDurationMs("120m", "--agent-timeout")).toBe(7_200_000);
 		expect(() => parseDurationMs("0", "--agent-timeout")).toThrow("--agent-timeout");
 		expect(() => parseDurationMs("1h", "--agent-timeout")).toThrow("--agent-timeout");
 	});

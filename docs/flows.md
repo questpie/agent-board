@@ -27,11 +27,11 @@ agent-board flow watch <run-id>
 
 `flow run` prints the run id immediately and renders compact per-agent progress by default (start, throttled char counts and preview, heartbeats, finish, errors). Pass `--no-watch` when you want a quiet run; it still prints the `flow watch <run-id>` command so another terminal can follow the same `events.jsonl`. `flow watch <run-id>` is read-only — it never spawns agents or mutates run state — and exits when the run produces `summary.md` or on Ctrl-C.
 
-`--agent-timeout` controls the per-agent activity watchdog (default 60m).
-Thinking/tool/runtime activity counts as liveness and renders as heartbeats, but
-it is not review evidence. If no meaningful runtime activity arrives before the
-watchdog expires, the lane fails as a runtime timeout instead of being treated as
-a pass.
+`--agent-timeout` controls the per-agent inactivity watchdog (default 120m).
+Long reviews are allowed to keep running while thinking/tool/runtime activity
+arrives and renders as heartbeats, but that activity is not review evidence. If
+no meaningful runtime activity arrives before the watchdog expires, the lane
+fails as a runtime timeout instead of being treated as a pass.
 
 Codex runs default to `--codex-mcp isolated`. agent-board creates a generated
 `CODEX_HOME` for flow subagents, copies `auth.json`, writes a minimal
@@ -191,7 +191,7 @@ you need to pin a different ACP executable for Keychain stability.
 stream coalesces into a few events rather than one event per token. While the
 stream is fully quiet, agent-board emits an idle heartbeat every ~30s by default
 (override with `AGENT_BOARD_FLOW_IDLE_HEARTBEAT_MS`) until the runtime returns or
-the activity watchdog fails the lane.
+the inactivity watchdog fails the lane.
 
 ## Controller Pattern
 

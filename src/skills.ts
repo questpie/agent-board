@@ -370,7 +370,8 @@ Safe defaults:
 - Flow agents default to \`mode: "read"\` (enforced via \`auto-reject\`: native file reads only, no shell, no edits). Cross-agent reviews and research stay read-only; only opt a role into \`mode: "write"\` when the controller explicitly wants it to edit.
 - The controller owns git state and final decisions. Spawned agents do not choose branches, commit policy, or roadmap.
 - \`flow run\` prints the run id immediately and renders live progress by default. Pass \`--no-watch\` only when another terminal will follow with \`agent-board flow watch <run-id>\`.
-- Flow heartbeats mean liveness, not evidence. Thinking/tool/runtime activity keeps the per-agent activity watchdog alive; a lane only has review evidence once it produces text in \`agents/*.md\` or \`summary.md\`.
+- Flow heartbeats mean liveness, not evidence. Thinking/tool/runtime activity keeps the per-agent inactivity watchdog alive; a long review should keep running while activity arrives. A lane only has review evidence once it produces text in \`agents/*.md\` or \`summary.md\`.
+- Review gates should distinguish \`pass\`, \`findings\`, and \`inconclusive\`. Missing, thin, contradictory, or runtime-limited reviewer output is \`inconclusive\`, not proof that the implementation is bad or good.
 - Codex flow subagents default to \`--codex-mcp isolated\`: agent-board generates a minimal \`CODEX_HOME\` without global \`mcp_servers\`, avoiding repeated macOS Keychain prompts for \`Codex MCP Credentials\`. Use \`--codex-mcp inherit\` only when the flow intentionally needs the user's normal Codex MCP integrations.
 - For durable partial findings tied to a task, record a checkpoint with \`agent-board progress <task-id> --from -\`; do not rely on git diff as the only handoff.
 
@@ -412,6 +413,7 @@ Review prevents false completion. Find concrete bugs, missing tests, regressions
 - Create follow-up tasks for real issues.
 - Avoid broad rewrites unless the task requires them.
 - Keep review notes concise and actionable.
+- Use \`inconclusive\` when reviewer output is missing, thin, contradictory, runtime-limited, or otherwise cannot support a usable verdict. Escalate to a retry, another reviewer, or an explicit controller override with Evidence.
 
 If no actionable issues, say so and note residual risk or checks not run.
 `;

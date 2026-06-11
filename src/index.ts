@@ -836,7 +836,7 @@ flow
 	.option("--runtime <runtime>", "Agent runtime: codex, claude, or opencode", process.env.AGENT_BOARD_FLOW_RUNTIME ?? "codex")
 	.option("--concurrency <n>", "Maximum concurrent agents", "3")
 	.option("--agents <n>", "Agent count for ad-hoc flow runs", "3")
-		.option("--agent-timeout <duration>", "Per-agent activity watchdog: e.g. 10m, 60m", process.env.AGENT_BOARD_FLOW_AGENT_TIMEOUT ?? `${DEFAULT_FLOW_AGENT_TIMEOUT_MS}ms`)
+	.option("--agent-timeout <duration>", "Per-agent inactivity watchdog: e.g. 15m, 120m", process.env.AGENT_BOARD_FLOW_AGENT_TIMEOUT ?? `${DEFAULT_FLOW_AGENT_TIMEOUT_MS}ms`)
 	.option("--codex-mcp <mode>", "Codex MCP config mode: isolated or inherit", process.env.AGENT_BOARD_FLOW_CODEX_MCP ?? "isolated")
 	.option("--verbose", "Print raw agent stderr")
 	.option("--no-watch", "Do not print live per-agent progress while the flow runs")

@@ -19,7 +19,7 @@ export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
 export type FlowAgentMode = "read" | "write";
 
 export const DEFAULT_FLOW_AGENT_MODE: FlowAgentMode = "read";
-export const DEFAULT_FLOW_AGENT_TIMEOUT_MS = 3_600_000;
+export const DEFAULT_FLOW_AGENT_TIMEOUT_MS = 7_200_000;
 
 const require = createRequire(import.meta.url);
 
@@ -1576,17 +1576,17 @@ function flowTemplate(name: string, template: FlowTemplate): string {
 		return roleFlowTemplate(name, template, fallback, [
 			{
 				name: "reviewer",
-				brief: "Review the current changes for bugs, regressions, and unclear behavior. Do not edit files. Lead with concrete findings.",
+				brief: "Review the current changes for bugs, regressions, and unclear behavior. Do not edit files. Lead with concrete findings. End with `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`; use inconclusive when you could not inspect enough to make a usable call.",
 			},
 			{
 				name: "test-auditor",
-				brief: "Review test coverage for the current changes. Do not edit files. Return missing or weak tests.",
+				brief: "Review test coverage for the current changes. Do not edit files. Return missing or weak tests. End with `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`; use inconclusive when the evidence is too thin.",
 			},
 			{
 				name: "risk-reviewer",
-				brief: "Review operational, migration, concurrency, and compatibility risks. Do not edit files. Return concrete risks only.",
+				brief: "Review operational, migration, concurrency, and compatibility risks. Do not edit files. Return concrete risks only. End with `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`; use inconclusive when inspection was incomplete.",
 			},
-		], "Synthesize this into a code-review style report with findings first, then tests and next steps.");
+		], "Synthesize this into a code-review style report with findings first, then tests and next steps. Start with exactly one line: `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`. Use `Verdict: inconclusive` when worker outputs are missing, too thin, contradictory, runtime-limited, or otherwise do not support a usable review decision.");
 	}
 	return roleFlowTemplate(name, template, fallback, [
 		{

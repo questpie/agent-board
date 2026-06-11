@@ -127,9 +127,10 @@ agent-board flow watch <run-id>     # read-only follower for the same live progr
 Templates: `default`, `feature`, `review`, `fix`.
 
 `flow run` prints the run id immediately and renders live per-agent progress by default. Use `--no-watch` when another terminal will follow the run with `flow watch`.
-The per-agent activity watchdog defaults to 60m; thinking/tool/runtime activity
-counts as liveness and heartbeats distinguish active runtime events from a quiet
-stream that is still within the watchdog window.
+The per-agent inactivity watchdog defaults to 120m. Long reviews are allowed to
+keep running while thinking/tool/runtime activity arrives; heartbeats distinguish
+active runtime events from a quiet stream that is still within the watchdog
+window.
 
 Codex flows default to `--codex-mcp isolated`: subagents get a generated
 `CODEX_HOME` with Codex auth copied over, but without your global

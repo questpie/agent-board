@@ -1108,7 +1108,13 @@ export default async function flow({ agent, pipeline, parallel }) {
 			]);
 			expect(output).toContain(`Template: ${template}`);
 			const path = lineValue(output, "Script: ");
-			expect(await readFile(path, "utf-8")).toContain(marker);
+			const script = await readFile(path, "utf-8");
+			expect(script).toContain(marker);
+			if (template === "review") {
+				expect(script).toContain("Verdict: pass");
+				expect(script).toContain("Verdict: findings");
+				expect(script).toContain("Verdict: inconclusive");
+			}
 		}
 
 		const escaped = await run(cwd, env, [

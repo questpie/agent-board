@@ -131,11 +131,12 @@ default. Pass `--no-watch` to suppress live progress; the command still prints a
 tails a run's `events.jsonl`; it is read-only and exits when the run finishes or
 on Ctrl-C.
 
-`--agent-timeout` is a per-agent activity watchdog, defaulting to 60m. Thinking,
-tool use, and runtime activity count as liveness and render as heartbeats, but
-only text output becomes review evidence; a heartbeat with `0 chars` is
-liveness, not a verdict. Heartbeats also report whether the runner is actively
-receiving runtime events or waiting for the next stream event.
+`--agent-timeout` is a per-agent inactivity watchdog, defaulting to 120m. Long
+reviews are allowed to keep running while thinking, tool use, or runtime
+activity arrives and renders as heartbeats. Only text output becomes review
+evidence; a heartbeat with `0 chars` is liveness, not a verdict. Heartbeats also
+report whether the runner is actively receiving runtime events or waiting for
+the next stream event.
 
 For Codex runtime, `--codex-mcp isolated` is the default. It runs flow subagents
 with a generated `CODEX_HOME` that copies `auth.json` but omits the user's global
@@ -148,7 +149,7 @@ agent. Templates are simple editable JavaScript scripts:
 
 - `default`: researcher + critic + synthesis
 - `feature`: researcher + planner + tester + synthesis
-- `review`: reviewer + test auditor + risk reviewer + synthesis
+- `review`: reviewer + test auditor + risk reviewer + synthesis; the summary starts with `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`
 - `fix`: reproducer + locator + test planner + synthesis
 
 `flow run` prints:
