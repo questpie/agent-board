@@ -418,3 +418,126 @@ Reuse a small vocabulary across specs and knowledge so the board and the web vie
 5. Tag knowledge with a kind and a category from the shared taxonomy.
 6. Confirm with \`agent-board status\` and \`agent-board plan\` that phases read in order.
 `;
+
+export const designWireframeSkillReadme = `---
+name: agent-board-design-wireframe
+description: "Author or extend an HTML-mockup wireframe (design board) the way Claude Design does: zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Use when prototyping screens, building UI/UX mockups or wireframes, or designing a flow board before implementation — whenever asked to mock up, prototype, or visually design screens. Pairs with agent-board-design-review. Triggers: wireframe, mockup, prototype, design board, flow board, screen mockup, HTML mockup, UI/UX, visual prototype."
+---
+
+# Agent Board · Design Wireframe
+
+Use this skill to AUTHOR a design as a portable HTML-mockup board. The output is a faithful, inspectable prototype a human reviews and a coder implements from — not production code. Authoring HTML mockups with the same agent that holds the specs is the highest-leverage design loop: live, themeable, inspectable, no Figma round-trip.
+
+## The medium: zero-build, in-browser
+
+- One HTML entry loads React + ReactDOM UMD and \`@babel/standalone\` from a CDN. Every design file is \`<script type="text/babel" src="*.jsx">\`; Babel transpiles JSX in the browser. No bundler, no node_modules.
+- No imports/exports — files publish to \`window.*\` and read each other from there. So load order IS the dependency graph: kit first, then screens, then the canvas, then an inline App that renders.
+- Consequence: it must be served over HTTP, never opened from \`file://\` (Babel fetches each .jsx).
+
+## Structure to follow
+
+1. A design kit (one file): tokens as plain JS objects (colors, fonts, spacing), an inline-SVG \`Icon\`, honest placeholders (gradient \`Photo\` tiles, initials \`Avatar\` — never fabricated imagery), device chrome (status bar, a \`Screen\` frame, tab bars), and atoms (\`Btn\`, \`Chip\`, \`Toggle\`). Publish each to \`window\`.
+2. Screen modules: each defines screen components (\`ScrXxx\`) and any explainer boards (\`BoardXxx\`) on \`window\`.
+3. A canvas: a Figma-like wrapper that lays titled sections of artboards out with pan/zoom. Build a minimal one, or harvest the full pan/zoom/focus/export canvas from a Claude Design export and reuse it.
+4. An inline App: a factory like \`A(id, label, child, w, h)\` builds artboards; group them into titled sections; render with \`ReactDOM.createRoot\`.
+
+## Conventions that make it good
+
+- Honest placeholders only — never fake photos, logos, or real-looking data passed off as content.
+- Tokens as objects, referenced everywhere; no scattered hex, so a theme swap is one edit.
+- One screen = one artboard at a real device size (e.g. 390×844 phone, 1320×896 desktop).
+- A section is one user flow or screen family; an artboard label states the screen's intent and the spec section it satisfies.
+- Match the platform's chrome (native status/tab bars vs a browser frame) so the prototype reads true.
+
+## Preview (verify visually before handing off)
+
+Serve the bundle over HTTP and open it. A plain static server works; this zero-dep server also shims the canvas file-write bridge so artboard reorder/rename/hide persist to a sidecar:
+
+\`\`\`js
+// preview.js — run: bun preview.js ; open http://localhost:4848
+const DIR = "./design/board", PORT = 4848;
+const SHIM = '<script>window.omelette={writeFile:(f,c)=>' +
+  'fetch("/__write?f="+encodeURIComponent(f),{method:"PUT",body:c})' +
+  '.then(r=>{if(!r.ok)throw new Error("write")})}</' + 'script>';
+Bun.serve({ port: PORT, async fetch(req) {
+  const u = new URL(req.url);
+  if (req.method === "PUT" && u.pathname === "/__write") {
+    if (u.searchParams.get("f") !== ".design-canvas.state.json")
+      return new Response("forbidden", { status: 403 });
+    await Bun.write(DIR + "/" + u.searchParams.get("f"), await req.text());
+    return new Response("ok");
+  }
+  const p = u.pathname === "/" ? "/index.html" : u.pathname;
+  const file = Bun.file(DIR + p);
+  if (!(await file.exists())) return new Response("not found", { status: 404 });
+  if (p.endsWith(".html"))
+    return new Response((await file.text()).replace("</head>", SHIM + "</head>"),
+      { headers: { "content-type": "text/html" } });
+  return new Response(file);
+}});
+\`\`\`
+
+The \`window.omelette\` shim is only needed when you reuse a Claude-Design canvas (it persists edits through that bridge); a board without it previews fine as plain static files.
+
+## Put it on the board
+
+- Save the bundle in the repo (e.g. \`design/<board>/\`) so it travels with the code.
+- Tie it to the work it serves: \`agent-board link <task-id> --spec <spec-id>\`, or record the board with \`agent-board knowledge add "<board> wireframe" --kind note --category design\`. Design then lives next to the specs and tasks that depend on it.
+- Hand off to review with the agent-board-design-review skill.
+
+## Don't
+
+- Don't write production framework code here — this is a prototype medium; the coder reimplements from it.
+- Don't fabricate imagery, brands, or realistic fake data.
+- Don't open over \`file://\`, and don't scatter raw hex instead of tokens.
+`;
+
+export const designWireframeSkillAgents = `# Agent Board Design Wireframe Rules
+
+- Author mode: produce a portable HTML-mockup board, not production code. A coder reimplements from it.
+- Zero-build medium: React + ReactDOM UMD + Babel standalone; files publish to \`window\`; load order is the dependency graph (kit -> screens -> canvas -> inline App).
+- Serve over HTTP and verify visually; never open from \`file://\`.
+- Honest placeholders only; tokens as objects (no scattered hex); one screen = one device-sized artboard; sections are flows; labels carry spec refs.
+- Save the bundle in-repo and tie it to its spec (\`agent-board link <task-id> --spec <spec-id>\`); hand off to agent-board-design-review.
+`;
+
+export const designReviewSkillReadme = `---
+name: agent-board-design-review
+description: "Review an HTML-mockup wireframe / design board: open it, screenshot and inspect each artboard, and produce structured, spec-linked critique — the design analog of code review. Use when asked to review, critique, or give feedback on a mockup, wireframe, or design board, or to check a design against its spec. Pairs with agent-board-design-wireframe. Triggers: design review, critique mockup, review wireframe, design feedback, check design against spec, UX review."
+---
+
+# Agent Board · Design Review
+
+Use this skill to REVIEW a design wireframe and turn it into concrete, spec-linked findings — the design analog of code review. You critique; you do not redesign.
+
+## Loop
+
+1. Read what the board must satisfy: \`agent-board show <task-id>\` and the linked spec (\`agent-board spec cat <spec-id>\`).
+2. Serve the board over HTTP and open it (it can't run from \`file://\`). Screenshot each artboard.
+3. Inspect, don't eyeball: read computed styles for spacing, color, and type — a screenshot won't give exact values. Walk every section and state, not just the happy path.
+4. Critique across dimensions:
+   - Spec coverage — is every required screen, state, and edge case present?
+   - Flow integrity — can a user actually get from each screen to the next?
+   - Visual system — token consistency, hierarchy, contrast and legibility (a11y).
+   - Honesty — placeholders read as placeholders; no fabricated data masquerading as real.
+   - Platform fit — correct device sizes and native-vs-web chrome.
+5. Record findings as concrete follow-ups linked to the spec: \`agent-board new "<fix>" --status ready\` for real gaps, or \`agent-board knowledge add "<trap>" --kind gotcha --category design\`. Prioritize blocking gaps over polish.
+
+## Output
+
+A spec-coverage verdict, an ordered list of findings (blocking first, polish last) each naming the artboard and the spec clause it misses, and the residual risk or checks you did not run.
+
+## Don't
+
+- Don't redesign the board — that's the agent-board-design-wireframe skill. Critique and hand back.
+- Don't assert exact pixels or colors from a screenshot; inspect computed styles.
+- Don't file vague notes — every finding points at an artboard and a reason.
+`;
+
+export const designReviewSkillAgents = `# Agent Board Design Review Rules
+
+- Review mode: critique a wireframe; do not redesign it.
+- Serve over HTTP, screenshot every artboard, and inspect computed styles for exact spacing/color/type.
+- Critique spec coverage, flow integrity, visual-system consistency, honesty of placeholders, and platform fit.
+- Record concrete, spec-linked follow-ups (\`agent-board new\`, \`agent-board knowledge add\`); blocking gaps before polish.
+`;

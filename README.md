@@ -44,9 +44,9 @@ agent-board skills install
 `agent-board skills install` links the bundled skills into supported local runtimes:
 
 ```txt
-~/.claude/skills/{agent-board,agent-board-worker,agent-board-research}
-~/.agents/skills/{agent-board,agent-board-worker,agent-board-research}
-~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research}
+~/.claude/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-design-wireframe,agent-board-design-review}
+~/.agents/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-design-wireframe,agent-board-design-review}
+~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-design-wireframe,agent-board-design-review}
 ```
 
 Check links, and that the bundled skill docs still match the CLI:
@@ -89,13 +89,15 @@ agent-board done add-task-cli
 
 ## Skills
 
-Three skills are bundled:
+Five skills are bundled:
 
 - `agent-board`: controller/orchestrator. Plans goals, writes specs, creates and links tasks, delegates workers, reviews evidence, and controls flow waves.
 - `agent-board-worker`: executes one explicit task id. Claims, edits, verifies, and closes the task.
 - `agent-board-research`: read-only discovery. Turns uncertainty into specs, knowledge, blockers, and concrete tasks.
+- `agent-board-design-wireframe`: authors an HTML-mockup wireframe (design board) — zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Prototype screens before implementation.
+- `agent-board-design-review`: read-only critique of a wireframe against its spec — screenshot and inspect each artboard, then file concrete, spec-linked findings.
 
-The split keeps hot skill context small: controllers do not carry worker implementation detail, and workers do not choose the roadmap.
+The split keeps hot skill context small: controllers do not carry worker implementation detail, workers do not choose the roadmap, and the design pair separates authoring a mockup from reviewing it.
 
 ## Optional Flows
 

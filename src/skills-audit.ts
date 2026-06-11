@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import {
 	configSkillReadme,
+	designReviewSkillAgents,
+	designReviewSkillReadme,
+	designWireframeSkillAgents,
+	designWireframeSkillReadme,
 	flowOrchestrationSkillReadme,
 	organizationReference,
 	pmOrchestratorSkillReadme,
@@ -38,6 +42,10 @@ const SKILL_DOCS: ReadonlyArray<{ source: string; text: string }> = [
 	{ source: "agent-board-worker/AGENTS.md", text: workerSkillAgents },
 	{ source: "agent-board-research/SKILL.md", text: researchSkillReadme },
 	{ source: "agent-board-research/AGENTS.md", text: researchSkillAgents },
+	{ source: "agent-board-design-wireframe/SKILL.md", text: designWireframeSkillReadme },
+	{ source: "agent-board-design-wireframe/AGENTS.md", text: designWireframeSkillAgents },
+	{ source: "agent-board-design-review/SKILL.md", text: designReviewSkillReadme },
+	{ source: "agent-board-design-review/AGENTS.md", text: designReviewSkillAgents },
 	{ source: "references/config.md", text: configSkillReadme },
 	{ source: "references/organization.md", text: organizationReference },
 	{ source: "references/task-workflow.md", text: taskWorkflowReference },

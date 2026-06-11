@@ -13,6 +13,8 @@
     agent-board/
     agent-board-worker/
     agent-board-research/
+    agent-board-design-wireframe/
+    agent-board-design-review/
   projects/<project>/
     project.json
     flows/

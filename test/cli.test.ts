@@ -24,6 +24,8 @@ describe("cli", () => {
 		expect((await readdir(join(home, "projects", "demo", "goals", "main"))).sort()).toContain("tasks");
 		expect((await readdir(join(home, "skills"))).sort()).toEqual([
 			"agent-board",
+			"agent-board-design-review",
+			"agent-board-design-wireframe",
 			"agent-board-research",
 			"agent-board-worker",
 		]);

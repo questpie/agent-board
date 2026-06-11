@@ -7,6 +7,10 @@ import { atomicWrite, ensureDir, findLocalRoot, findWorktreeMainRoot, getHomeRoo
 import { gitRoot } from "./git.js";
 import {
 	configSkillReadme,
+	designReviewSkillAgents,
+	designReviewSkillReadme,
+	designWireframeSkillAgents,
+	designWireframeSkillReadme,
 	flowOrchestrationSkillReadme,
 	organizationReference,
 	pmOrchestratorSkillReadme,
@@ -34,7 +38,7 @@ const LOCAL_GITIGNORE = [
 	"",
 ].join("\n");
 
-export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research"] as const;
+export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research", "agent-board-design-wireframe", "agent-board-design-review"] as const;
 
 const SKILL_RUNTIMES = ["claude", "agents", "cursor"] as const;
 
@@ -530,6 +534,16 @@ async function installBundledSkills(root: string): Promise<void> {
 	await ensureDir(researchRoot);
 	await writeBundledSkill(join(researchRoot, "SKILL.md"), researchSkillReadme);
 	await writeBundledSkill(join(researchRoot, "AGENTS.md"), researchSkillAgents);
+
+	const designWireframeRoot = join(root, "skills", "agent-board-design-wireframe");
+	await ensureDir(designWireframeRoot);
+	await writeBundledSkill(join(designWireframeRoot, "SKILL.md"), designWireframeSkillReadme);
+	await writeBundledSkill(join(designWireframeRoot, "AGENTS.md"), designWireframeSkillAgents);
+
+	const designReviewRoot = join(root, "skills", "agent-board-design-review");
+	await ensureDir(designReviewRoot);
+	await writeBundledSkill(join(designReviewRoot, "SKILL.md"), designReviewSkillReadme);
+	await writeBundledSkill(join(designReviewRoot, "AGENTS.md"), designReviewSkillAgents);
 }
 
 async function readProjectConfig(projectPath: string): Promise<ProjectConfig> {
