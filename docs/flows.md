@@ -25,7 +25,20 @@ agent-board flow show <run-id>
 agent-board flow watch <run-id>
 ```
 
-`flow watch <run-id>` tails the run's `events.jsonl` and renders compact per-agent progress (start, throttled char counts and preview, heartbeats, finish, errors). It is read-only — it never spawns agents or mutates run state — and exits when the run produces `summary.md` or on Ctrl-C.
+`flow run` prints the run id immediately and renders compact per-agent progress by default (start, throttled char counts and preview, heartbeats, finish, errors). Pass `--no-watch` when you want a quiet run; it still prints the `flow watch <run-id>` command so another terminal can follow the same `events.jsonl`. `flow watch <run-id>` is read-only — it never spawns agents or mutates run state — and exits when the run produces `summary.md` or on Ctrl-C.
+
+`--agent-timeout` controls the per-agent activity watchdog (default 60m).
+Thinking/tool/runtime activity counts as liveness and renders as heartbeats, but
+it is not review evidence. If no meaningful runtime activity arrives before the
+watchdog expires, the lane fails as a runtime timeout instead of being treated as
+a pass.
+
+Codex runs default to `--codex-mcp isolated`. agent-board creates a generated
+`CODEX_HOME` for flow subagents, copies `auth.json`, writes a minimal
+`config.toml`, and omits the user's global `mcp_servers`. This prevents
+long-running flow waves from repeatedly triggering macOS Keychain prompts for
+`Codex MCP Credentials`. Use `--codex-mcp inherit` if a flow explicitly needs
+the MCP servers from your normal Codex config.
 
 Templates:
 
@@ -169,11 +182,16 @@ you need to pin a different ACP executable for Keychain stability.
 | `log` | `message` | Controller-level lifecycle line. |
 | `agent_start` | `name`, `mode`, `promptChars` | An agent began streaming. |
 | `agent_delta` | `name`, `chars`, `preview` | Throttled progress while text streams. `chars` is the running output length; `preview` is a SHORT trailing tail (≤ ~80 chars), never the full text. |
-| `agent_heartbeat` | `name`, `chars` | A throttle window saw runtime/tool activity (stderr or tool events) but produced no new text — the agent is alive but quiet. |
+| `agent_heartbeat` | `name`, `chars`, `quietMs`, `timeoutMs`, `streamIdleMs` | The agent is still inside the watchdog window but produced no new text. `streamIdleMs = 0` means runtime/tool activity is arriving; `streamIdleMs > 0` means agent-board is waiting for the next stream event. |
 | `agent_finish` | `name`, `mode`, `durationMs`, `outputPath`, `chars`, `diagnostics` | An agent completed; full output is at `outputPath`. |
 | `agent_error` | `name`, `durationMs`, `diagnostics`, `error` | An agent failed. |
 
-`agent_delta`/`agent_heartbeat` are emitted at most once per throttle window (default ~1s, override with `AGENT_BOARD_FLOW_THROTTLE_MS`), so a fast token stream coalesces into a few events rather than one event per token.
+`agent_delta`/`agent_heartbeat` are emitted at most once per throttle window
+(default ~1s, override with `AGENT_BOARD_FLOW_THROTTLE_MS`), so a fast token
+stream coalesces into a few events rather than one event per token. While the
+stream is fully quiet, agent-board emits an idle heartbeat every ~30s by default
+(override with `AGENT_BOARD_FLOW_IDLE_HEARTBEAT_MS`) until the runtime returns or
+the activity watchdog fails the lane.
 
 ## Controller Pattern
 
@@ -186,7 +204,8 @@ For non-trivial work:
 5. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
 6. Summarize the phases to the user.
 7. Run the script after approval or explicit go-ahead.
-8. Read `summary.md`, update board state, and decide the next wave.
+8. While the flow runs, read the live progress lines; if the flow is attached to a task and you learn something durable before completion, record it with `agent-board progress <task-id> --from -`.
+9. Read `summary.md`, update board state, and decide the next wave.
 
 The main chat remains controller. Spawned agents do not own roadmap, branch policy, commit policy, or final done decisions.
 

@@ -4,16 +4,18 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, setKnowledgeCategory, setSpecCategory, writeKnowledgeBody, writeSpecBody } from "./documents.js";
-import { createFlow, FlowRunError, listFlows, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
+import { createFlow, DEFAULT_FLOW_AGENT_TIMEOUT_MS, FlowRunError, listFlows, parseCodexMcpMode, parseDurationMs as parseFlowDurationMs, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, relocateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
-import { appendEvidence, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
+import { appendEvidence, appendTaskProgress, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "./verify.js";
 import { auditSkillDrift, collectRepoDocs } from "./skills-audit.js";
 import { applyNudge, nudgeStatus } from "./nudge.js";
+import { buildMaintenanceReport, parseDurationMs, type MaintenanceReport } from "./maintenance.js";
 import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
 import { startWebServer } from "./web.js";
+import { getWireframe, importWireframe, listWireframes } from "./wireframes.js";
 
 const program = new Command();
 
@@ -79,6 +81,7 @@ program
 			console.log(result.copied.length ? `Copied: ${result.copied.join(", ")}` : "Copied: nothing");
 			if (result.cleaned) console.log("Source removed.");
 			else if (result.backup) console.log(`Backup kept: ${result.backup} (re-run with --cleanup to remove)`);
+			for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
 			if (result.to === "local") {
 				console.log("Next: commit .agent-board/ with the repo — other clones pick it up automatically, no env needed.");
 			}
@@ -155,11 +158,13 @@ goal
 goal
 	.command("use")
 	.argument("<goal-id>")
+	.option("--force", "Change the shared active goal even from a non-interactive agent session")
 	.description("Set active goal for the current project")
-	.action(async (id) => {
+	.action(async (id, options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
-			await useGoal(workspace, id);
+			const opts = readOptions<{ force?: boolean }>(options);
+			await useGoal(workspace, id, { force: opts.force, interactive: process.stdin.isTTY });
 			console.log(`Using goal ${id}`);
 		});
 	});
@@ -486,6 +491,96 @@ knowledge
 		});
 	});
 
+const wireframe = program
+	.command("wireframe")
+	.alias("design")
+	.description("Manage HTML design board wireframes");
+
+wireframe
+	.command("import")
+	.argument("<directory>")
+	.option("--title <title>", "Wireframe title")
+	.option("--scope <scope>", "global, project, or goal", "project")
+	.option("--category <name>", "Group the wireframe under a category")
+	.option("--status <status>", "Wireframe status", "draft")
+	.option("--entry <path>", "HTML entry file inside the bundle")
+	.description("Import a zero-build HTML wireframe bundle into the board")
+	.action(async (directory, options) => {
+		await main(async () => {
+			const opts = readOptions<{ title?: string; scope: string; category?: string; status?: string; entry?: string }>(options);
+			const workspace = currentWorkspace();
+			const scope = parseScope(opts.scope);
+			const doc = await importWireframe(workspace, directory, {
+				title: opts.title,
+				scope,
+				category: opts.category,
+				status: opts.status,
+				entry: opts.entry,
+			});
+			console.log(`Created wireframe ${scope}/${doc.meta.id}`);
+			console.log(`Entry: ${doc.meta.entry}`);
+			console.log(`Bundle: ${doc.dir}`);
+			console.log("Preview: agent-board web");
+		});
+	});
+
+wireframe
+	.command("list")
+	.option("--scope <scope>", "global, project, or goal")
+	.option("--category <name>", "Filter by category")
+	.description("List wireframes")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ scope?: string; category?: string }>(options);
+			const workspace = currentWorkspace();
+			const scope = opts.scope ? parseScope(opts.scope) : undefined;
+			const docs = (await listWireframes(workspace, scope)).filter(
+				(doc) => !opts.category || doc.meta.category === opts.category,
+			);
+			if (docs.length === 0) {
+				console.log("No wireframes.");
+				return;
+			}
+			console.log(
+				table([
+					["Scope", "ID", "Category", "Status", "Entry", "Title"],
+					...docs.map((doc) => [
+						doc.scope,
+						doc.meta.id,
+						doc.meta.category ?? "-",
+						doc.meta.status ?? "-",
+						doc.meta.entry,
+						doc.meta.title,
+					]),
+				]),
+			);
+		});
+	});
+
+wireframe
+	.command("show")
+	.argument("<wireframe-id>")
+	.description("Show a wireframe metadata file")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await getWireframe(workspace, id);
+			console.log(await readFile(doc.path, "utf-8"));
+		});
+	});
+
+wireframe
+	.command("cat")
+	.argument("<wireframe-id>")
+	.description("Print a wireframe notes body without frontmatter")
+	.action(async (id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const doc = await getWireframe(workspace, id);
+			console.log(doc.body.trimEnd());
+		});
+	});
+
 program
 	.command("claim")
 	.argument("<task-id>")
@@ -501,6 +596,27 @@ program
 			});
 			console.log(`Claimed ${task.meta.id}`);
 			for (const warning of warnings) console.warn(`Warning: ${warning}`);
+		});
+	});
+
+program
+	.command("progress")
+	.argument("<task-id>")
+	.argument("[message...]", "Progress checkpoint text")
+	.description("Append a progress checkpoint to a task's Evidence section")
+	.option("--from <file|->", "Read progress text from a file or stdin")
+	.option("--agent <name>", "Agent name", process.env.USER ?? "agent")
+	.action(async (id, messageParts, options) => {
+		await main(async () => {
+			const opts = readOptions<{ from?: string; agent?: string }>(options);
+			const inline = Array.isArray(messageParts) ? messageParts.join(" ") : "";
+			const message = opts.from ? await readInputSource(opts.from) : inline;
+			const workspace = currentWorkspace();
+			const task = await appendTaskProgress(workspace, id, {
+				message,
+				agent: opts.agent,
+			});
+			console.log(`Progress ${task.meta.id}`);
 		});
 	});
 
@@ -720,7 +836,10 @@ flow
 	.option("--runtime <runtime>", "Agent runtime: codex, claude, or opencode", process.env.AGENT_BOARD_FLOW_RUNTIME ?? "codex")
 	.option("--concurrency <n>", "Maximum concurrent agents", "3")
 	.option("--agents <n>", "Agent count for ad-hoc flow runs", "3")
+		.option("--agent-timeout <duration>", "Per-agent activity watchdog: e.g. 10m, 60m", process.env.AGENT_BOARD_FLOW_AGENT_TIMEOUT ?? `${DEFAULT_FLOW_AGENT_TIMEOUT_MS}ms`)
+	.option("--codex-mcp <mode>", "Codex MCP config mode: isolated or inherit", process.env.AGENT_BOARD_FLOW_CODEX_MCP ?? "isolated")
 	.option("--verbose", "Print raw agent stderr")
+	.option("--no-watch", "Do not print live per-agent progress while the flow runs")
 	.action(async (target, options) => {
 		await main(async () => {
 			const opts = readOptions<{
@@ -729,9 +848,13 @@ flow
 				runtime: string;
 				concurrency: string;
 				agents: string;
+				agentTimeout: string;
+				codexMcp: string;
 				verbose?: boolean;
+				watch?: boolean;
 			}>(options);
 			const workspace = await currentOrInitWorkspace();
+			let started = false;
 			let result;
 			try {
 				result = await runFlow(workspace, {
@@ -741,7 +864,20 @@ flow
 					runtime: parseFlowRuntime(opts.runtime),
 					concurrency: parsePositiveInt(opts.concurrency, "--concurrency"),
 					agents: parsePositiveInt(opts.agents, "--agents"),
+					agentTimeoutMs: parseFlowDurationMs(opts.agentTimeout, "--agent-timeout"),
+					codexMcpMode: parseCodexMcpMode(opts.codexMcp),
 					verbose: opts.verbose,
+					onRunStart: (run) => {
+						started = true;
+						console.log(`Flow run ${run.runId}`);
+						console.log(`Run dir: ${run.runPath}`);
+						if (opts.watch === false) {
+							console.log(`Watch: agent-board flow watch ${run.runId}`);
+						} else {
+							console.log("Live progress:");
+						}
+					},
+					onEventLine: opts.watch === false ? undefined : (line) => console.log(line),
 				});
 			} catch (error) {
 				if (error instanceof FlowRunError) {
@@ -753,7 +889,8 @@ flow
 				}
 				throw error;
 			}
-			console.log(`Flow run ${result.runId}`);
+			if (!started) console.log(`Flow run ${result.runId}`);
+			else console.log(`Flow run ${result.runId} finished`);
 			console.log(`Summary: ${result.summaryPath}`);
 			console.log(`Agent outputs: ${join(result.runPath, "agents")}`);
 			console.log(`Diagnostics: ${join(result.runPath, "diagnostics.jsonl")}`);
@@ -821,6 +958,30 @@ flow
 			} finally {
 				process.off("SIGINT", onSigint);
 			}
+		});
+	});
+
+program
+	.command("maintenance")
+	.description("Read-only board maintenance report for stale work, flow cleanup candidates, and consolidation")
+	.option("--stale-after <duration>", "Age threshold for stale claims and runs, e.g. 30m, 24h, 7d", "24h")
+	.option("--dry-run", "Only report findings; never mutate board state", true)
+	.option("--json", "Print the raw JSON report")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ staleAfter: string; dryRun?: boolean; json?: boolean }>(options);
+			if (opts.dryRun === false) {
+				throw new Error("maintenance is read-only for now; omit destructive cleanup and retry actions.");
+			}
+			const workspace = currentWorkspace();
+			const report = await buildMaintenanceReport(workspace, {
+				staleAfterMs: parseDurationMs(opts.staleAfter),
+			});
+			if (opts.json) {
+				console.log(JSON.stringify(report, null, 2));
+				return;
+			}
+			printMaintenanceReport(report);
 		});
 	});
 
@@ -980,6 +1141,106 @@ async function maybeNudgeHint(): Promise<void> {
 async function readInputSource(source: string): Promise<string> {
 	if (source === "-") return new Response(Bun.stdin.stream()).text();
 	return readFile(source, "utf-8");
+}
+
+function printMaintenanceReport(report: MaintenanceReport): void {
+	console.log(`Maintenance report (read-only): ${report.project}/${report.goal}`);
+	console.log(`Generated: ${report.generated}`);
+	console.log(`Stale threshold: ${formatDuration(report.staleAfterMs)}`);
+
+	console.log("\nStale Claims");
+	console.log(
+		report.staleClaims.length
+			? table([
+					["Task", "Assignee", "Age", "Updated", "Title"],
+					...report.staleClaims.map((issue) => [
+						issue.id,
+						issue.assignee,
+						formatDuration(issue.ageMs),
+						issue.updated,
+						issue.title,
+					]),
+				])
+			: "- none",
+	);
+
+	console.log("\nFlow Runs Needing Attention");
+	console.log(
+		report.flowRuns.length
+			? table([
+					["Run", "Status", "Age", "Reason"],
+					...report.flowRuns.map((issue) => [
+						issue.id,
+						issue.status,
+						formatDuration(issue.ageMs),
+						issue.reason,
+					]),
+				])
+			: "- none",
+	);
+
+	console.log("\nBroken Links");
+	console.log(
+		report.brokenLinks.length
+			? table([
+					["Task", "Field", "Ref", "Reason"],
+					...report.brokenLinks.map((issue) => [
+						issue.taskId,
+						issue.field,
+						issue.ref,
+						issue.reason,
+					]),
+				])
+			: "- none",
+	);
+
+	printConsolidationSection("Spec Consolidation", report.specConsolidation);
+	printConsolidationSection("Knowledge Consolidation", report.knowledgeConsolidation);
+	console.log("\nNo changes were made. Review findings before editing, retrying, or deleting anything.");
+}
+
+function printConsolidationSection(
+	title: string,
+	section: MaintenanceReport["specConsolidation"],
+): void {
+	console.log(`\n${title} - Duplicate Titles`);
+	console.log(
+		section.duplicates.length
+			? section.duplicates
+					.map((group) => {
+						const rows = group.items.map((item) => `${item.scope}/${item.id}`);
+						return `- ${group.key}: ${rows.join(", ")}`;
+					})
+					.join("\n")
+			: "- none",
+	);
+	console.log(`\n${title} - Needs Review`);
+	console.log(
+		section.needsReview.length
+			? table([
+					["Doc", "Reason", "Category", "Updated", "Title"],
+					...section.needsReview.map((issue) => [
+						`${issue.scope}/${issue.id}`,
+						issue.reason,
+						issue.category || "-",
+						issue.updated,
+						issue.title,
+					]),
+				])
+			: "- none",
+	);
+}
+
+function formatDuration(ms: number): string {
+	const abs = Math.max(0, Math.round(ms));
+	const minute = 60_000;
+	const hour = 60 * minute;
+	const day = 24 * hour;
+	if (abs >= day) return `${Math.round(abs / day)}d`;
+	if (abs >= hour) return `${Math.round(abs / hour)}h`;
+	if (abs >= minute) return `${Math.round(abs / minute)}m`;
+	if (abs >= 1000) return `${Math.round(abs / 1000)}s`;
+	return `${abs}ms`;
 }
 
 function printPlanSection(

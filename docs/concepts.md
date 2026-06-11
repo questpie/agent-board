@@ -9,21 +9,26 @@
   registry.json
   specs/
   knowledge/
+  wireframes/
   skills/
     agent-board/
     agent-board-worker/
     agent-board-research/
+    agent-board-design-wireframe/
+    agent-board-design-review/
   projects/<project>/
     project.json
     flows/
     specs/
     knowledge/
+    wireframes/
     goals/<goal>/
       goal.md
       status.md
       tasks/
       specs/
       knowledge/
+      wireframes/
       flows/runs/
 ```
 
@@ -35,6 +40,7 @@ A repo-local board (`init --local`) is flatter — a single project with no `pro
   .gitignore          # ignores transient flows/runs
   specs/
   knowledge/
+  wireframes/
   flows/
   goals/<goal>/
     goal.md
@@ -42,16 +48,22 @@ A repo-local board (`init --local`) is flatter — a single project with no `pro
     tasks/
     specs/
     knowledge/
+    wireframes/
     flows/runs/
 ```
 
-Resolution precedence from the working directory: `AGENT_BOARD_HOME` (explicit) → a `.agent-board/` found by walking up (stopping at `$HOME`) → `~/.agent-board`. The home registry maps repository paths to projects; a local board needs no registry, since its location identifies the project.
+Resolution precedence from the working directory: `AGENT_BOARD_HOME` (explicit) → a `.agent-board/` found by walking up (stopping at `$HOME`) → the main checkout's `.agent-board/` when the working directory sits in a linked git worktree → `~/.agent-board`. The home registry maps repository paths to projects; a local board needs no registry, since its location identifies the project.
+
+Linked git worktrees resolve to their main checkout's project in both modes: home-registry matching follows the worktree's `.git` pointer back to the registered repository, and a local board in the main checkout governs all of its worktrees (a committed board copy inside a worktree is never written to, so task state cannot fork per worktree). The workspace repo, however, stays the worktree itself — claims, verify, and other git operations run in the agent's own checkout. `AGENT_BOARD_REPO` remains the explicit override.
 
 ## Project, Goal, Task
 
 **Project** is a repository's board — a registered path in home mode, or the repo containing a local `.agent-board/`.
 
-**Goal** is the active slice of work inside a project. Tasks belong to a goal.
+**Goal** is a slice of work inside a project. Tasks belong to a goal. `project.json`
+stores `active_goal` as a convenience default for humans; parallel agents should
+pin their goal with `--goal <id>` or `AGENT_BOARD_GOAL=<id>` instead of running
+`goal use`, because `goal use` mutates shared project state.
 
 **Task** is the executable unit. It can be claimed, verified, reviewed, blocked, and done.
 
@@ -61,7 +73,7 @@ Resolution precedence from the working directory: `AGENT_BOARD_HOME` (explicit) 
 
 ## Overlays
 
-Specs and knowledge can live at three scopes:
+Specs, knowledge, and wireframes can live at three scopes:
 
 - `global`: shared across projects
 - `project`: shared by all goals in one repo
@@ -79,6 +91,7 @@ Qualified references:
 task:<project>/<goal>/<task>
 spec:<scope>/<id>
 knowledge:<scope>/<id>
+wireframe:<scope>/<id>
 ```
 
 ## Task Contract

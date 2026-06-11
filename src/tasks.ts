@@ -155,6 +155,25 @@ export async function writeTaskBody(
 	}));
 }
 
+export async function appendTaskProgress(
+	workspace: Workspace,
+	id: string,
+	input: { message: string; agent?: string },
+): Promise<TaskFile> {
+	const message = normalizeProgressMessage(input.message);
+	if (!message) throw new Error("Progress message cannot be empty.");
+	return updateTask(workspace, id, (task) => {
+		task.body = appendEvidence(
+			task.body,
+			formatProgressEvidence({
+				timestamp: nowIso(),
+				agent: input.agent,
+				message,
+			}),
+		);
+	});
+}
+
 export async function setTaskStatus(
 	workspace: Workspace,
 	id: string,
@@ -418,6 +437,24 @@ export function appendEvidence(body: string, entry: string): string {
 		return `${trimmed}\n\n${entry}\n`;
 	}
 	return `${trimmed}\n\n## Evidence\n\n${entry}\n`;
+}
+
+function formatProgressEvidence(input: {
+	timestamp: string;
+	agent?: string;
+	message: string;
+}): string {
+	const by = input.agent ? ` by ${input.agent}` : "";
+	const lines = input.message.split(/\r?\n/);
+	if (lines.length === 1) return `- [progress] ${input.timestamp}${by}: ${lines[0]}`;
+	return [
+		`- [progress] ${input.timestamp}${by}:`,
+		...lines.map((line) => `  ${line}`),
+	].join("\n");
+}
+
+function normalizeProgressMessage(message: string): string {
+	return message.replace(/\r\n/g, "\n").trim();
 }
 
 function unique(values: string[]): string[] {

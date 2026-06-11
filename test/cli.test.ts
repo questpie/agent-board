@@ -1,5 +1,5 @@
 import { existsSync, lstatSync } from "node:fs";
-import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
@@ -24,6 +24,9 @@ describe("cli", () => {
 		expect((await readdir(join(home, "projects", "demo", "goals", "main"))).sort()).toContain("tasks");
 		expect((await readdir(join(home, "skills"))).sort()).toEqual([
 			"agent-board",
+			"agent-board-design-review",
+			"agent-board-design-wireframe",
+			"agent-board-maintenance",
 			"agent-board-research",
 			"agent-board-worker",
 		]);
@@ -70,6 +73,136 @@ describe("cli", () => {
 		expect(existsSync(join(board, "goals", "main", "tasks", "add-cli.md"))).toBe(true);
 	});
 
+	test("local board default doc lists do not duplicate the flat global/project overlay", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-local-docs-"));
+		const env = noHomeEnv();
+
+		await run(repo, env, ["init", "--local", "--project", "demo"]);
+		await run(repo, env, ["spec", "new", "Local Spec", "--scope", "project"]);
+		await run(repo, env, ["knowledge", "add", "Local Note", "--kind", "note", "--scope", "global"]);
+
+		const specs = await run(repo, env, ["spec", "list"]);
+		const knowledge = await run(repo, env, ["knowledge", "list"]);
+		expect(specs.match(/\blocal-spec\b/g)?.length ?? 0).toBe(1);
+		expect(knowledge.match(/\blocal-note\b/g)?.length ?? 0).toBe(1);
+		expect(specs).toContain("project");
+		expect(knowledge).toContain("project");
+
+		const explicitGlobal = await run(repo, env, ["knowledge", "list", "--scope", "global"]);
+		expect(explicitGlobal.match(/\blocal-note\b/g)?.length ?? 0).toBe(1);
+		expect(explicitGlobal).toContain("global");
+	});
+
+	test("wireframe import stores an HTML design board in agent-board", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-wireframe-"));
+		const env = noHomeEnv();
+		const source = join(repo, "design-source");
+		await mkdir(source, { recursive: true });
+		await writeFile(join(source, "index.html"), "<!doctype html><div>Demo board</div><script type=\"text/babel\" src=\"screen.jsx\"></script>");
+		await writeFile(join(source, "screen.jsx"), "window.DemoBoard = true;");
+
+		await run(repo, env, ["init", "--local", "--project", "demo"]);
+		const out = await run(repo, env, [
+			"wireframe",
+			"import",
+			source,
+			"--title",
+			"Demo Board",
+			"--scope",
+			"global",
+			"--category",
+			"design",
+		]);
+		expect(out).toContain("Created wireframe global/demo-board");
+		expect(out).toContain("Preview: agent-board web");
+		expect(existsSync(join(repo, ".agent-board", "wireframes", "demo-board", "index.html"))).toBe(true);
+		expect(existsSync(join(repo, ".agent-board", "wireframes", "demo-board", "screen.jsx"))).toBe(true);
+
+		const list = await run(repo, env, ["wireframe", "list"]);
+		expect(list.match(/\bdemo-board\b/g)?.length ?? 0).toBe(1);
+		expect(list).toContain("project");
+		expect(list).toContain("design");
+		expect(await run(repo, env, ["design", "list", "--scope", "global"])).toContain("global  demo-board");
+		expect(await run(repo, env, ["wireframe", "show", "demo-board"])).toContain('entry: "index.html"');
+	});
+
+	test("resolves a home-board project from inside a linked git worktree", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-wt-home-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await gitInit(repo);
+		await run(repo, env, ["init", "--project", "demo"]);
+		await run(repo, env, ["new", "Worktree Task", "--status", "ready"]);
+
+		const wt = join(dirname(repo), `${basename(repo)}-wt`);
+		await gitWorktreeAdd(repo, wt);
+
+		// The worktree is a sibling of repo_path, yet commands resolve without --project.
+		expect(await run(wt, env, ["tasks"])).toContain("worktree-task");
+	});
+
+	test("routes a linked worktree to the main checkout's local board", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-wt-local-"));
+		const env = noHomeEnv();
+		await gitInit(repo);
+		await run(repo, env, ["init", "--local", "--project", "demo"]);
+		// Commit the board so the worktree checkout carries its own (stale) copy.
+		await gitCommitAll(repo, "board");
+		const wt = join(dirname(repo), `${basename(repo)}-wt`);
+		await gitWorktreeAdd(repo, wt);
+		expect(existsSync(join(wt, ".agent-board", "project.json"))).toBe(true);
+
+		await run(wt, env, ["new", "From Worktree", "--status", "ready"]);
+
+		// The write lands in the main checkout's board, not the worktree's copy.
+		expect(existsSync(join(repo, ".agent-board", "goals", "main", "tasks", "from-worktree.md"))).toBe(true);
+		expect(existsSync(join(wt, ".agent-board", "goals", "main", "tasks", "from-worktree.md"))).toBe(false);
+	});
+
+	test("unresolved project error names known projects and overrides", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-known-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const elsewhere = await mkdtemp(join(tmpdir(), "agent-board-elsewhere-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		await run(repo, env, ["init", "--project", "demo"]);
+
+		const output = await runFail(elsewhere, env, ["tasks"]);
+		expect(output).toContain("No agent-board project found for");
+		expect(output).toContain("demo");
+		expect(output).toContain("--project <slug>");
+		expect(output).toContain("AGENT_BOARD_PROJECT");
+	});
+
+	test("goal use is guarded for agents; explicit goal overrides do not mutate active goal", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-goal-guard-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		const projectPath = join(home, "projects", "demo", "project.json");
+
+		await run(repo, env, ["init", "--project", "demo"]);
+		await run(repo, env, ["goal", "new", "Auth Goal", "--id", "auth"]);
+
+		const nonInteractive = await runFail(repo, env, ["goal", "use", "auth"]);
+		expect(nonInteractive).toContain("Refusing to change shared active goal from main to auth in non-interactive mode");
+		expect(nonInteractive).toContain("Use --goal auth or AGENT_BOARD_GOAL=auth");
+
+		expect(await run(repo, env, ["status", "--goal", "auth"])).toContain("Goal: auth");
+		expect(JSON.parse(await readFile(projectPath, "utf-8")).active_goal).toBe("main");
+
+		await run(repo, env, ["new", "Busy Task", "--status", "ready"]);
+		await run(repo, env, ["claim", "busy-task", "--agent", "worker-1"]);
+		const runPath = join(home, "projects", "demo", "goals", "main", "flows", "runs", "2026-06-11-open-run");
+		await mkdir(runPath, { recursive: true });
+		await writeFile(join(runPath, "events.jsonl"), `${JSON.stringify({ ts: "2026-06-11T10:00:00.000Z", type: "agent_start", name: "worker" })}\n`);
+		const activeWork = await runFail(repo, env, ["goal", "use", "auth"]);
+		expect(activeWork).toContain("main has active work");
+		expect(activeWork).toContain("1 in-progress task (worker-1)");
+		expect(activeWork).toContain("1 incomplete flow run");
+
+		expect(await run(repo, env, ["goal", "use", "auth", "--force"])).toContain("Using goal auth");
+		expect(JSON.parse(await readFile(projectPath, "utf-8")).active_goal).toBe("auth");
+	});
+
 	test("relocate --to local moves a home board into the repo and cleans up home", async () => {
 		const repo = await mkdtemp(join(tmpdir(), "agent-board-reloc-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
@@ -77,6 +210,10 @@ describe("cli", () => {
 
 		await run(repo, homeEnv, ["init", "--project", "demo"]);
 		await run(repo, homeEnv, ["new", "Home Task", "--status", "ready"]);
+		const source = join(repo, "wireframe-source");
+		await mkdir(source, { recursive: true });
+		await writeFile(join(source, "index.html"), "<!doctype html><div>Home wireframe</div>");
+		await run(repo, homeEnv, ["wireframe", "import", source, "--title", "Home Wireframe"]);
 
 		const out = await run(repo, homeEnv, ["relocate", "--to", "local", "--cleanup"]);
 		expect(out).toContain("Relocated demo -> local");
@@ -85,11 +222,29 @@ describe("cli", () => {
 		// The task moved into the repo board; the home project and its registry entry are gone.
 		const board = join(repo, ".agent-board");
 		expect(existsSync(join(board, "goals", "main", "tasks", "home-task.md"))).toBe(true);
+		expect(existsSync(join(board, "wireframes", "home-wireframe", "index.html"))).toBe(true);
 		expect(existsSync(join(home, "projects", "demo"))).toBe(false);
 		expect(JSON.parse(await readFile(join(home, "registry.json"), "utf-8")).projects.demo).toBeUndefined();
 
 		// Without the env override, the relocated board is discovered by walking up.
 		expect(await run(repo, noHomeEnv(), ["tasks"])).toContain("home-task");
+	});
+
+	test("relocate --to local warns when shared home global docs will be hidden", async () => {
+		const repo = await mkdtemp(join(tmpdir(), "agent-board-reloc-global-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+
+		await run(repo, env, ["init", "--project", "demo"]);
+		await run(repo, env, ["spec", "new", "Shared Contract", "--scope", "global"]);
+		await run(repo, env, ["knowledge", "add", "Shared Note", "--kind", "note", "--scope", "global"]);
+
+		const out = await run(repo, env, ["relocate", "--to", "local"]);
+		expect(out).toContain("Warning: Shared home overlay not copied");
+		expect(out).toContain("1 global spec");
+		expect(out).toContain("1 global knowledge note");
+		expect(existsSync(join(home, "specs", "shared-contract.md"))).toBe(true);
+		expect(await run(repo, noHomeEnv(), ["spec", "list"])).not.toContain("shared-contract");
 	});
 
 	test("init --local anchors the board at the git root, not the subdir", async () => {
@@ -122,6 +277,45 @@ describe("cli", () => {
 		const env = noHomeEnv();
 		await run(repo, env, ["init", "--local", "--project", "webdemo"]);
 		await run(repo, env, ["new", "Web Task", "--status", "ready"]);
+		await run(repo, env, ["spec", "new", "Web Spec", "--scope", "project"]);
+		await run(repo, env, ["knowledge", "add", "Web Note", "--kind", "note", "--scope", "global"]);
+		const wireframeSource = join(repo, "web-wireframe-source");
+		await mkdir(wireframeSource, { recursive: true });
+		await writeFile(join(wireframeSource, "index.html"), "<!doctype html><div>Web Wireframe</div><script type=\"text/babel\" src=\"screen.jsx\"></script>");
+		await writeFile(join(wireframeSource, "screen.jsx"), "window.WebWireframe = true;");
+		await run(repo, env, ["wireframe", "import", wireframeSource, "--title", "Web Wireframe", "--category", "design"]);
+		const runsRoot = join(repo, ".agent-board", "goals", "main", "flows", "runs");
+		const liveRun = "2026-06-11-live-flow";
+		const staleRun = "2026-06-10-stale-flow";
+		const doneRun = "2026-06-09-done-flow";
+		await mkdir(join(runsRoot, liveRun), { recursive: true });
+		await writeFile(
+			join(runsRoot, liveRun, "events.jsonl"),
+			[
+				{ ts: "2026-06-11T10:00:00.000Z", type: "agent_start", name: "researcher", mode: "read" },
+				{ ts: "2026-06-11T10:00:01.000Z", type: "agent_delta", name: "researcher", chars: 42, preview: "live preview from streaming telemetry" },
+			].map((event) => JSON.stringify(event)).join("\n") + "\n",
+		);
+		await mkdir(join(runsRoot, staleRun), { recursive: true });
+		const staleEventsPath = join(runsRoot, staleRun, "events.jsonl");
+		await writeFile(
+			staleEventsPath,
+			[
+				{ ts: "2026-06-10T10:00:00.000Z", type: "agent_start", name: "critic", mode: "read" },
+				{ ts: "2026-06-10T10:00:01.000Z", type: "agent_delta", name: "critic", chars: 20, preview: "old preview" },
+			].map((event) => JSON.stringify(event)).join("\n") + "\n",
+		);
+		const old = new Date(Date.now() - 30 * 60 * 1000);
+		await utimes(staleEventsPath, old, old);
+		await mkdir(join(runsRoot, doneRun), { recursive: true });
+		await writeFile(
+			join(runsRoot, doneRun, "events.jsonl"),
+			[
+				{ ts: "2026-06-09T10:00:00.000Z", type: "agent_start", name: "synth", mode: "read" },
+				{ ts: "2026-06-09T10:00:02.000Z", type: "agent_finish", name: "synth", chars: 80 },
+			].map((event) => JSON.stringify(event)).join("\n") + "\n",
+		);
+		await writeFile(join(runsRoot, doneRun, "summary.md"), "# Flow Run\n\nDone.\n");
 
 		// A real starting port (parsePositiveInt rejects 0); the server falls back to
 		// a free port on collision and prints the actual URL, which the test parses.
@@ -137,12 +331,45 @@ describe("cli", () => {
 			const body = (await res.json()) as {
 				projects: Array<{ slug: string }>;
 				tasks: Array<{ meta: { id: string } }>;
+				specs: Array<{ scope: string; meta: { id: string } }>;
+				knowledge: Array<{ scope: string; meta: { id: string } }>;
+				wireframes: Array<{ scope: string; meta: { id: string }; url: string }>;
+				runs: Array<{ id: string; status: string; active: boolean; runningAgents: number; preview?: string }>;
 				current: { project: string };
 			};
 			// The local board is discovered and served with no registry, no env.
 			expect(body.projects.map((p) => p.slug)).toContain("webdemo");
 			expect(body.tasks.map((t) => t.meta.id)).toContain("web-task");
+			expect(body.specs.filter((s) => s.meta.id === "web-spec").length).toBe(1);
+			expect(body.knowledge.filter((k) => k.meta.id === "web-note").length).toBe(1);
+			expect(body.knowledge.find((k) => k.meta.id === "web-note")?.scope).toBe("project");
+			const wireframe = body.wireframes.find((w) => w.meta.id === "web-wireframe");
+			expect(wireframe).toMatchObject({ scope: "project" });
+			expect(await (await fetch(new URL(wireframe!.url, url))).text()).toContain("Web Wireframe");
+			expect(await (await fetch(new URL(wireframe!.url.replace(/\/[^/]*$/, "/screen.jsx"), url))).text()).toContain("WebWireframe");
 			expect(body.current.project).toBe("webdemo");
+			expect(body.runs.find((run) => run.id === liveRun)).toMatchObject({
+				status: "running",
+				active: true,
+				runningAgents: 1,
+				preview: "live preview from streaming telemetry",
+			});
+			expect(body.runs.find((run) => run.id === staleRun)).toMatchObject({
+				status: "stale",
+				active: false,
+				runningAgents: 1,
+				preview: "old preview",
+			});
+			expect(body.runs.find((run) => run.id === doneRun)).toMatchObject({
+				status: "done",
+				active: false,
+			});
+
+			const detail = await fetch(`${url}/api/flow-run?id=${liveRun}`);
+			const detailBody = (await detail.json()) as { status: string; preview?: string; agents: Array<{ lastActivity?: string }> };
+			expect(detailBody.status).toBe("running");
+			expect(detailBody.preview).toBe("live preview from streaming telemetry");
+			expect(detailBody.agents[0]?.lastActivity).toBe("2026-06-11T10:00:01.000Z");
 		} finally {
 			proc.kill();
 			await proc.exited;
@@ -199,7 +426,7 @@ describe("cli", () => {
 		expect(await run(cwd, env, ["goal", "new", "Auth Goal", "--id", "auth"])).toContain(
 			"Created goal auth",
 		);
-		expect(await run(cwd, env, ["goal", "use", "auth"])).toContain("Using goal auth");
+		expect(await run(cwd, env, ["goal", "use", "auth", "--force"])).toContain("Using goal auth");
 		expect(await run(cwd, env, ["goals"])).toContain("*       auth");
 		expect(await run(cwd, env, ["spec", "new", "Auth Plan"])).toContain(
 			"Created spec project/auth-plan",
@@ -231,6 +458,94 @@ describe("cli", () => {
 		expect(await run(cwd, env, ["spec", "list"])).toContain("project  auth-plan");
 		expect(await run(cwd, env, ["spec", "list"])).toContain("goal     auth-spike");
 		expect(await run(cwd, env, ["knowledge", "list"])).toContain("global");
+	});
+
+	test("records progress checkpoints on task evidence", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-progress-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		const taskPath = join(home, "projects", "demo", "goals", "main", "tasks", "progress-task.md");
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Progress Task", "--status", "ready"]);
+
+		expect(await run(cwd, env, [
+			"progress",
+			"progress-task",
+			"inspected parser paths",
+			"--agent",
+			"worker-1",
+		])).toContain("Progress progress-task");
+
+		expect(await runWithInput(cwd, env, [
+			"progress",
+			"progress-task",
+			"--from",
+			"-",
+			"--agent",
+			"worker-2",
+		], "line one\nline two\n")).toContain("Progress progress-task");
+
+		const task = await readFile(taskPath, "utf-8");
+		expect(task).toContain("## Evidence");
+		expect(task).toContain("[progress]");
+		expect(task).toContain("by worker-1: inspected parser paths");
+		expect(task).toContain("by worker-2:\n  line one\n  line two");
+		expect(await runFail(cwd, env, ["progress", "progress-task"])).toContain(
+			"Progress message cannot be empty",
+		);
+	});
+
+	test("maintenance reports stale work, broken links, and consolidation candidates without mutating", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-maintenance-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+		const taskPath = join(home, "projects", "demo", "goals", "main", "tasks", "stale-task.md");
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Stale Task", "--status", "ready"]);
+		await run(cwd, env, ["claim", "stale-task", "--agent", "worker-1"]);
+		await run(cwd, env, ["spec", "new", "API Plan"]);
+		await run(cwd, env, ["spec", "new", "API Plan"]);
+		await run(cwd, env, ["knowledge", "add", "Retry Gotcha", "--kind", "gotcha"]);
+		await run(cwd, env, ["knowledge", "add", "Retry Gotcha", "--kind", "gotcha"]);
+
+		const oldIso = "2026-01-01T00:00:00.000Z";
+		const task = await readFile(taskPath, "utf-8");
+		await writeFile(
+			taskPath,
+			task
+				.replace(/updated: ".*?"/, `updated: "${oldIso}"`)
+				.replace("specs: []", 'specs: ["missing-spec"]')
+				.replace("depends_on: []", 'depends_on: ["missing-task"]'),
+		);
+
+		const runPath = join(home, "projects", "demo", "goals", "main", "flows", "runs", "2026-01-01-stale-run");
+		await mkdir(runPath, { recursive: true });
+		const eventsPath = join(runPath, "events.jsonl");
+		await writeFile(eventsPath, `${JSON.stringify({ ts: oldIso, type: "agent_start", name: "reader", mode: "read" })}\n`);
+		const old = new Date("2026-01-01T00:00:00.000Z");
+		await utimes(eventsPath, old, old);
+
+		const output = await run(cwd, env, ["maintenance", "--stale-after", "1m"]);
+		expect(output).toContain("Maintenance report (read-only): demo/main");
+		expect(output).toContain("stale-task");
+		expect(output).toContain("2026-01-01-stale-run");
+		expect(output).toContain("missing-task");
+		expect(output).toContain("missing-spec");
+		expect(output).toContain("api-plan");
+		expect(output).toContain("retry-gotcha");
+		expect(output).toContain("No changes were made");
+
+		const json = JSON.parse(await run(cwd, env, ["maintenance", "--json", "--stale-after", "1m"]));
+		expect(json.staleClaims.map((issue: { id: string }) => issue.id)).toContain("stale-task");
+		expect(json.flowRuns.map((issue: { id: string }) => issue.id)).toContain("2026-01-01-stale-run");
+		expect(json.brokenLinks.map((issue: { ref: string }) => issue.ref).sort()).toEqual([
+			"missing-spec",
+			"missing-task",
+		]);
+		expect(json.specConsolidation.duplicates[0].items.length).toBe(2);
+		expect(json.knowledgeConsolidation.duplicates[0].items.length).toBe(2);
 	});
 
 	test("link --blocks to a missing target fails without mutating the source", async () => {
@@ -594,9 +909,11 @@ Old task.
 			...process.env,
 			AGENT_BOARD_HOME: home,
 			AGENT_BOARD_FLOW_MOCK: "1",
+			AGENT_BOARD_FLOW_AGENT_TIMEOUT: "60m",
 			// Time throttle wide enough that the fast text stream coalesces into a
 			// single delta, then spaced activity beats land in later windows.
 			AGENT_BOARD_FLOW_THROTTLE_MS: "50",
+			AGENT_BOARD_FLOW_IDLE_HEARTBEAT_MS: "30",
 			AGENT_BOARD_FLOW_MOCK_ACTIVITY: "1",
 			AGENT_BOARD_FLOW_MOCK_DELAY_MS: "120",
 		};
@@ -609,6 +926,13 @@ Old task.
 			"--agents",
 			"1",
 		]);
+		expect(output).toContain("Live progress:");
+		expect(output).toContain("researcher: start (read)");
+		expect(output).toContain("researcher: working");
+		expect(output).toContain("active, no text");
+		expect(output).toContain("waiting, no stream");
+		expect(output).toContain("Flow run");
+		expect(output).toContain("finished");
 		const summaryPath = lineValue(output, "Summary: ");
 		const runPath = dirname(summaryPath);
 		const raw = await readFile(join(runPath, "events.jsonl"), "utf-8");
@@ -624,6 +948,13 @@ Old task.
 		// Both progress event types are written, proving the stream telemetry path.
 		expect(deltas.length).toBeGreaterThan(0);
 		expect(heartbeats.length).toBeGreaterThan(0);
+		for (const heartbeat of heartbeats) {
+			expect(typeof heartbeat.quietMs).toBe("number");
+			expect(heartbeat.timeoutMs).toBe(3_600_000);
+			expect(typeof heartbeat.streamIdleMs).toBe("number");
+		}
+		expect(heartbeats.some((heartbeat) => heartbeat.streamIdleMs === 0)).toBe(true);
+		expect(heartbeats.some((heartbeat) => (heartbeat.streamIdleMs as number) > 0)).toBe(true);
 
 		// No raw token spam: a large agent output coalesces into very few deltas.
 		for (const finish of finishes) {
@@ -800,7 +1131,16 @@ export default async function flow({ agent, pipeline, parallel }) {
 		const overwritten = await run(cwd, env, ["flow", "new", "fix flow", "--force", "--template", "fix"]);
 		expect(overwritten).toContain("Template: fix");
 
-		const runOutput = await run(cwd, env, ["flow", "run", "fix-flow", "--input", "Fix command boundary"]);
+		const runOutput = await run(cwd, env, [
+			"flow",
+			"run",
+			"fix-flow",
+			"--input",
+			"Fix command boundary",
+			"--no-watch",
+		]);
+		expect(runOutput).toContain("Watch: agent-board flow watch");
+		expect(runOutput).not.toContain("Live progress:");
 		const summary = await readFile(lineValue(runOutput, "Summary: "), "utf-8");
 		expect(summary).toContain("Mock codex response");
 		expect(summary).toContain("reproducer");
@@ -939,6 +1279,20 @@ async function gitInit(dir: string): Promise<void> {
 	await writeFile(join(dir, "g.txt"), "b");
 	await g(["add", "."]);
 	await g(["commit", "-m", "two"]);
+}
+
+async function gitCommitAll(dir: string, message: string): Promise<void> {
+	const g = (args: string[]) =>
+		Bun.spawn(["git", "-C", dir, ...args], { stdout: "pipe", stderr: "pipe" }).exited;
+	await g(["add", "."]);
+	await g(["commit", "-m", message]);
+}
+
+async function gitWorktreeAdd(repo: string, path: string): Promise<void> {
+	await Bun.spawn(["git", "-C", repo, "worktree", "add", path], {
+		stdout: "pipe",
+		stderr: "pipe",
+	}).exited;
 }
 
 async function gitDetach(dir: string): Promise<void> {

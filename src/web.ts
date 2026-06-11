@@ -6,6 +6,7 @@ import { listFlows, readFlowScript } from "./flow.js";
 import { listGoals, listProjects, resolveWorkspace, workspaceForGoal } from "./workspace.js";
 import { listTasks } from "./tasks.js";
 import type { Workspace } from "./types.js";
+import { listWireframes, wireframeAsset, wireframeWebPath } from "./wireframes.js";
 
 export interface WebServerOptions {
 	port: number;
@@ -20,6 +21,7 @@ export async function startWebServer(options: WebServerOptions): Promise<void> {
 		const url = new URL(req.url);
 		try {
 			if (url.pathname.startsWith("/api/")) return await handleApi(url);
+			if (url.pathname.startsWith("/wireframes/")) return await handleWireframeAsset(url);
 			return await serveStatic(url.pathname);
 		} catch (error) {
 			return json({ error: error instanceof Error ? error.message : String(error) }, 500);
@@ -88,13 +90,18 @@ async function board(
 		listFlows(workspace),
 		listFlowRuns(workspace),
 	]);
+	const wireframes = await listWireframes(workspace);
+	const goalSummaries = await Promise.all(
+		goals.map(async (g) => ({ id: g.id, title: g.title, active: g.active, updated: await goalUpdatedMs(g.path) })),
+	);
 	return {
 		projects: projects.map((p) => ({ slug: p.slug, repo_path: p.repo_path })),
 		current: { project: workspace.projectSlug, goal: workspace.goalSlug, repo: workspace.repoPath },
-		goals: goals.map((g) => ({ id: g.id, title: g.title, active: g.active })),
+		goals: goalSummaries,
 		tasks: tasks.map((t) => ({ meta: t.meta, body: t.body })),
 		specs: specs.map((s) => ({ scope: s.scope, meta: s.meta, body: s.body })),
 		knowledge: knowledge.map((k) => ({ scope: k.scope, meta: k.meta, body: k.body })),
+		wireframes: wireframes.map((w) => ({ scope: w.scope, meta: w.meta, body: w.body, url: wireframeWebPath(workspace, w) })),
 		flows: flows.map((f) => ({ name: f.name })),
 		runs,
 	};
@@ -111,7 +118,8 @@ async function goalsSummary(workspace: Workspace): Promise<unknown> {
 			const counts: Record<string, number> = {};
 			for (const s of STATUSES) counts[s] = 0;
 			for (const t of tasks) counts[t.meta.status] = (counts[t.meta.status] ?? 0) + 1;
-			return { id: g.id, title: g.title, active: g.active, total: tasks.length, counts, runs };
+			const updated = latestIso(tasks.map((task) => task.meta.updated)) ?? await goalUpdatedIso(g.path);
+			return { id: g.id, title: g.title, active: g.active, total: tasks.length, counts, runs, updated };
 		}),
 	);
 	return { goals: summaries };
@@ -128,7 +136,11 @@ interface FlowRunSummary {
 	updated: number;
 	hasSummary: boolean;
 	active: boolean;
+	status: FlowRunStatus;
 	agents: number;
+	runningAgents: number;
+	errorAgents: number;
+	preview?: string;
 }
 
 async function listFlowRuns(workspace: Workspace): Promise<FlowRunSummary[]> {
@@ -142,15 +154,22 @@ async function listFlowRuns(workspace: Workspace): Promise<FlowRunSummary[]> {
 				const hasSummary = existsSync(join(runPath, "summary.md"));
 				const events = await readEvents(join(runPath, "events.jsonl"));
 				const agents = deriveAgents(events);
-				const active = !hasSummary && agents.some((a) => a.status === "running");
-				let updated = 0;
-				try {
-					updated = (await stat(join(runPath, "events.jsonl"))).mtimeMs;
-				} catch {}
-				return { id: entry.name, updated, hasSummary, active, agents: agents.length };
+				const updated = await flowRunUpdatedMs(runPath);
+				const state = deriveFlowRunState({ agents, events, hasSummary, updated });
+				return {
+					id: entry.name,
+					updated,
+					hasSummary,
+					active: state.active,
+					status: state.status,
+					agents: agents.length,
+					runningAgents: state.runningAgents,
+					errorAgents: state.errorAgents,
+					preview: latestAgentPreview(agents),
+				};
 			}),
 	);
-	return runs.sort((a, b) => b.id.localeCompare(a.id));
+	return runs.sort((a, b) => b.updated - a.updated || b.id.localeCompare(a.id));
 }
 
 async function flowRun(workspace: Workspace, idParam: string | null): Promise<unknown> {
@@ -159,11 +178,15 @@ async function flowRun(workspace: Workspace, idParam: string | null): Promise<un
 	if (!existsSync(dir)) throw new Error(`Flow run not found: ${id}`);
 	const events = await readEvents(join(dir, "events.jsonl"));
 	const summary = await readFile(join(dir, "summary.md"), "utf-8").catch(() => "");
+	const hasSummary = summary.length > 0;
+	const agents = deriveAgents(events);
+	const updated = await flowRunUpdatedMs(dir);
+	const state = deriveFlowRunState({ agents, events, hasSummary, updated });
 	const agentDir = join(dir, "agents");
 	const agentFiles = (await readdir(agentDir).catch(() => []))
 		.filter((name) => name.endsWith(".md"))
 		.sort();
-	return { id, summary, events, agents: deriveAgents(events), agentFiles };
+	return { id, summary, events, agents, agentFiles, updated, hasSummary, preview: latestAgentPreview(agents), ...state };
 }
 
 async function flowRunFile(
@@ -207,7 +230,17 @@ interface AgentState {
 	preview?: string;
 	started?: string;
 	finished?: string;
+	lastActivity?: string;
 	error?: string;
+}
+
+type FlowRunStatus = "running" | "stale" | "stopped" | "done" | "error";
+
+interface FlowRunState {
+	status: FlowRunStatus;
+	active: boolean;
+	runningAgents: number;
+	errorAgents: number;
 }
 
 async function readEvents(path: string): Promise<FlowEvent[]> {
@@ -239,6 +272,7 @@ function deriveAgents(events: FlowEvent[]): AgentState[] {
 		const name = typeof event.name === "string" ? event.name : undefined;
 		if (!name) continue;
 		const agent = ensure(name);
+		agent.lastActivity = event.ts ?? agent.lastActivity;
 		switch (event.type) {
 			case "agent_start":
 				agent.status = "running";
@@ -260,11 +294,87 @@ function deriveAgents(events: FlowEvent[]): AgentState[] {
 			case "agent_error":
 				agent.status = "error";
 				agent.finished = event.ts ?? agent.finished;
-				agent.error = typeof event.message === "string" ? event.message : agent.error;
+				agent.error =
+					typeof event.message === "string"
+						? event.message
+						: typeof event.error === "string"
+							? event.error
+							: agent.error;
 				break;
 		}
 	}
 	return order.map((name) => map.get(name)!);
+}
+
+async function flowRunUpdatedMs(runPath: string): Promise<number> {
+	let updated = 0;
+	for (const name of ["events.jsonl", "summary.md"]) {
+		try {
+			updated = Math.max(updated, (await stat(join(runPath, name))).mtimeMs);
+		} catch {}
+	}
+	return updated;
+}
+
+async function goalUpdatedMs(goalPath: string): Promise<number> {
+	try {
+		return (await stat(join(goalPath, "goal.md"))).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+async function goalUpdatedIso(goalPath: string): Promise<string> {
+	const updated = await goalUpdatedMs(goalPath);
+	return updated ? new Date(updated).toISOString() : "";
+}
+
+function latestIso(values: string[]): string | undefined {
+	return values
+		.filter(Boolean)
+		.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+}
+
+function latestAgentPreview(agents: AgentState[]): string | undefined {
+	const withPreview = agents
+		.filter((agent) => agent.preview)
+		.sort((a, b) => new Date(b.lastActivity ?? b.started ?? 0).getTime() - new Date(a.lastActivity ?? a.started ?? 0).getTime());
+	return withPreview[0]?.preview;
+}
+
+function deriveFlowRunState(input: {
+	agents: AgentState[];
+	events: FlowEvent[];
+	hasSummary: boolean;
+	updated: number;
+	now?: number;
+}): FlowRunState {
+	const runningAgents = input.agents.filter((agent) => agent.status === "running").length;
+	const errorAgents = input.agents.filter((agent) => agent.status === "error").length;
+	const hasFailure =
+		errorAgents > 0 ||
+		input.events.some((event) => event.type === "log" && typeof event.message === "string" && event.message.startsWith("flow failed"));
+	if (hasFailure) return { status: "error", active: false, runningAgents, errorAgents };
+	if (input.hasSummary) return { status: "done", active: false, runningAgents, errorAgents };
+
+	const now = input.now ?? Date.now();
+	const recentlyUpdated = input.updated > 0 && now - input.updated <= flowRunStaleMs();
+	if (runningAgents > 0) {
+		const status = recentlyUpdated ? "running" : "stale";
+		return { status, active: status === "running", runningAgents, errorAgents };
+	}
+	if (recentlyUpdated && input.events.length > 0) {
+		return { status: "running", active: true, runningAgents, errorAgents };
+	}
+	return { status: "stopped", active: false, runningAgents, errorAgents };
+}
+
+function flowRunStaleMs(): number {
+	const fallback = 10 * 60 * 1000;
+	const raw = process.env.AGENT_BOARD_FLOW_STALE_MS;
+	if (raw === undefined) return fallback;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function resolveWs(
@@ -306,11 +416,28 @@ async function serveStatic(pathname: string): Promise<Response> {
 	return new Response(file, type ? { headers: { "content-type": type } } : undefined);
 }
 
+async function handleWireframeAsset(url: URL): Promise<Response> {
+	const projects = await listProjects();
+	const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+	const [, project, goal, scope, id, ...assetParts] = parts;
+	if (!project || !goal || !scope || !id) return new Response("Not found", { status: 404 });
+	const workspace = resolveWs(projects, project, goal);
+	const asset = await wireframeAsset(workspace, parseOverlayScope(scope), safeName(id), assetParts.join("/") || undefined);
+	const file = Bun.file(asset.path);
+	if (!(await file.exists())) return new Response("Not found", { status: 404 });
+	return new Response(file, asset.type ? { headers: { "content-type": asset.type } } : undefined);
+}
+
 function json(data: unknown, status = 200): Response {
 	return new Response(JSON.stringify(data), {
 		status,
 		headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
 	});
+}
+
+function parseOverlayScope(value: string): "global" | "project" | "goal" {
+	if (value === "global" || value === "project" || value === "goal") return value;
+	throw new Error('Invalid scope. Expected "global", "project", or "goal".');
 }
 
 function safeName(value: string | null): string {

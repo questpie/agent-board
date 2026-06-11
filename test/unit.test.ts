@@ -5,10 +5,11 @@ import { describe, expect, test } from "bun:test";
 import { parseFrontmatter, stringifyFrontmatter } from "../src/markdown.js";
 import { createSpec } from "../src/documents.js";
 import { gitState } from "../src/git.js";
-import { atomicWrite } from "../src/utils.js";
+import { atomicWrite, findWorktreeMainRoot } from "../src/utils.js";
+import { resolveWorkspace } from "../src/workspace.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
-import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseStructuredOutput, resolveCodexAcpBin, runLimited } from "../src/flow.js";
+import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseCodexMcpMode, parseDurationMs, parseStructuredOutput, prepareCodexFlowEnvironment, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 import { Command } from "commander";
 import { findDrift } from "../src/skills-audit.js";
@@ -192,6 +193,14 @@ describe("flow agent mode", () => {
 		expect(modeToPermission("write")).toBe("auto-allow");
 		expect(modeToPermission(DEFAULT_FLOW_AGENT_MODE)).toBe("auto-reject");
 	});
+
+	test("parses activity watchdog durations", () => {
+		expect(parseDurationMs("250ms", "--agent-timeout")).toBe(250);
+		expect(parseDurationMs("180s", "--agent-timeout")).toBe(180_000);
+		expect(parseDurationMs("60m", "--agent-timeout")).toBe(3_600_000);
+		expect(() => parseDurationMs("0", "--agent-timeout")).toThrow("--agent-timeout");
+		expect(() => parseDurationMs("1h", "--agent-timeout")).toThrow("--agent-timeout");
+	});
 });
 
 describe("flow Codex ACP override", () => {
@@ -221,6 +230,49 @@ describe("flow Codex ACP override", () => {
 			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
 			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
 		}
+	});
+
+	test("isolates Codex home without copying global MCP servers", async () => {
+		const workspace = await tempWorkspace();
+		const sourceHome = await mkdtemp(join(tmpdir(), "agent-board-codex-source-"));
+		const boardHome = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		await writeFile(join(sourceHome, "auth.json"), '{"token":"test"}\n');
+		await writeFile(
+			join(sourceHome, "config.toml"),
+			[
+				"[features]",
+				"rmcp_client = true",
+				"",
+				"[mcp_servers.linear]",
+				'url = "https://mcp.linear.app/mcp"',
+				"",
+			].join("\n"),
+		);
+		const saved = saveEnv(["CODEX_HOME", "AGENT_BOARD_HOME", "AGENT_BOARD_FLOW_CODEX_HOME"]);
+		try {
+			process.env.CODEX_HOME = sourceHome;
+			process.env.AGENT_BOARD_HOME = boardHome;
+			const result = await prepareCodexFlowEnvironment(workspace, {
+				runtime: "codex",
+				codexMcpMode: "isolated",
+			});
+			const targetHome = result.env.CODEX_HOME!;
+			expect(targetHome).toContain(join(boardHome, "codex-flow-home", workspace.projectSlug));
+			expect(await readFile(join(targetHome, "auth.json"), "utf-8")).toBe('{"token":"test"}\n');
+			const config = await readFile(join(targetHome, "config.toml"), "utf-8");
+			expect(config).toContain("rmcp_client = false");
+			expect(config).toContain(`[projects.${JSON.stringify(workspace.repoPath)}]`);
+			expect(config).not.toContain("mcp_servers");
+			expect(result.diagnostics.join("\n")).toContain("isolated CODEX_HOME");
+		} finally {
+			restoreEnv(saved);
+		}
+	});
+
+	test("Codex MCP mode parser accepts isolated and inherit", () => {
+		expect(parseCodexMcpMode("isolated")).toBe("isolated");
+		expect(parseCodexMcpMode("inherit")).toBe("inherit");
+		expect(() => parseCodexMcpMode("global")).toThrow("Invalid Codex MCP mode");
 	});
 });
 
@@ -309,6 +361,119 @@ describe("skill drift audit", () => {
 	});
 });
 
+describe("worktree resolution", () => {
+	test("resolves a linked worktree to its main checkout via commondir", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-"));
+		const main = join(base, "main");
+		const wt = join(base, "wt");
+		await mkdir(join(main, ".git", "worktrees", "wt"), { recursive: true });
+		await writeFile(join(main, ".git", "worktrees", "wt", "commondir"), "../..\n");
+		await mkdir(wt, { recursive: true });
+		await writeFile(join(wt, ".git"), `gitdir: ${join(main, ".git", "worktrees", "wt")}\n`);
+
+		// Detected from the worktree root and from any (even not-yet-created) subdir.
+		expect(findWorktreeMainRoot(wt)).toEqual({ worktreeRoot: wt, mainRoot: main });
+		expect(findWorktreeMainRoot(join(wt, "src", "deep"))).toEqual({ worktreeRoot: wt, mainRoot: main });
+		// The main checkout has a .git directory, not a pointer file.
+		expect(findWorktreeMainRoot(main)).toBeNull();
+	});
+
+	test("resolves a relative gitdir pointer without a commondir file", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-rel-"));
+		const main = join(base, "main");
+		const wt = join(base, "wt");
+		await mkdir(join(main, ".git", "worktrees", "wt"), { recursive: true });
+		await mkdir(wt, { recursive: true });
+		await writeFile(join(wt, ".git"), "gitdir: ../main/.git/worktrees/wt");
+		expect(findWorktreeMainRoot(wt)).toEqual({ worktreeRoot: wt, mainRoot: main });
+	});
+
+	test("rejects submodule pointers and non-git directories", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-sub-"));
+		const sub = join(base, "sub");
+		await mkdir(sub, { recursive: true });
+		await writeFile(join(sub, ".git"), `gitdir: ${join(base, "main", ".git", "modules", "sub")}\n`);
+		expect(findWorktreeMainRoot(sub)).toBeNull();
+		expect(findWorktreeMainRoot(join(base, "plain"))).toBeNull();
+	});
+
+	test("resolves a home-board project from a worktree and routes repoPath to it", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-ws-"));
+		const home = join(base, "home");
+		const repo = join(base, "repo");
+		const wt = join(base, "repo-wt");
+		const projectPath = join(home, "projects", "demo");
+		await mkdir(join(projectPath, "goals", "main"), { recursive: true });
+		await writeFile(
+			join(home, "registry.json"),
+			JSON.stringify({ projects: { demo: { slug: "demo", repo_path: repo, project_path: projectPath } } }),
+		);
+		await writeFile(
+			join(projectPath, "project.json"),
+			JSON.stringify({
+				slug: "demo",
+				repo_path: repo,
+				active_goal: "main",
+				created: "2026-01-01T00:00:00.000Z",
+				updated: "2026-01-01T00:00:00.000Z",
+			}),
+		);
+		await mkdir(join(repo, ".git", "worktrees", "wt"), { recursive: true });
+		await writeFile(join(repo, ".git", "worktrees", "wt", "commondir"), "../..\n");
+		await mkdir(wt, { recursive: true });
+		await writeFile(join(wt, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "wt")}\n`);
+
+		const saved: Record<string, string | undefined> = {};
+		for (const key of ["AGENT_BOARD_HOME", "AGENT_BOARD_PROJECT", "AGENT_BOARD_GOAL", "AGENT_BOARD_REPO"]) {
+			saved[key] = process.env[key];
+			delete process.env[key];
+		}
+		process.env.AGENT_BOARD_HOME = home;
+		try {
+			const workspace = resolveWorkspace(wt);
+			expect(workspace.projectSlug).toBe("demo");
+			// Git operations target the worktree the agent works in...
+			expect(workspace.repoPath).toBe(wt);
+			// ...while the main checkout keeps resolving to the canonical repo.
+			expect(resolveWorkspace(repo).repoPath).toBe(repo);
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
+	test("names known projects and routing overrides when nothing matches", async () => {
+		const base = await mkdtemp(join(tmpdir(), "agent-board-wt-miss-"));
+		const home = join(base, "home");
+		const elsewhere = join(base, "elsewhere");
+		await mkdir(home, { recursive: true });
+		await mkdir(elsewhere, { recursive: true });
+		await writeFile(
+			join(home, "registry.json"),
+			JSON.stringify({ projects: { demo: { slug: "demo", repo_path: join(base, "repo"), project_path: join(home, "projects", "demo") } } }),
+		);
+
+		const saved: Record<string, string | undefined> = {};
+		for (const key of ["AGENT_BOARD_HOME", "AGENT_BOARD_PROJECT", "AGENT_BOARD_GOAL", "AGENT_BOARD_REPO"]) {
+			saved[key] = process.env[key];
+			delete process.env[key];
+		}
+		process.env.AGENT_BOARD_HOME = home;
+		try {
+			expect(() => resolveWorkspace(elsewhere)).toThrow(/No agent-board project found for .*elsewhere/);
+			expect(() => resolveWorkspace(elsewhere)).toThrow(/Known projects in .*registry\.json: demo/);
+			expect(() => resolveWorkspace(elsewhere)).toThrow(/--project <slug> or set AGENT_BOARD_PROJECT/);
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+});
+
 async function tempWorkspace(): Promise<Workspace> {
 	const cwd = await mkdtemp(join(tmpdir(), "agent-board-cwd-"));
 	const root = await mkdtemp(join(tmpdir(), "agent-board-root-"));
@@ -340,4 +505,17 @@ async function tempWorkspace(): Promise<Workspace> {
 			updated: new Date().toISOString(),
 		},
 	};
+}
+
+function saveEnv(keys: string[]): Record<string, string | undefined> {
+	const saved: Record<string, string | undefined> = {};
+	for (const key of keys) saved[key] = process.env[key];
+	return saved;
+}
+
+function restoreEnv(saved: Record<string, string | undefined>): void {
+	for (const [key, value] of Object.entries(saved)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
 }
