@@ -9,6 +9,8 @@ import {
 	designWireframeSkillAgents,
 	designWireframeSkillReadme,
 	flowOrchestrationSkillReadme,
+	maintenanceSkillAgents,
+	maintenanceSkillReadme,
 	organizationReference,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
@@ -42,6 +44,8 @@ const SKILL_DOCS: ReadonlyArray<{ source: string; text: string }> = [
 	{ source: "agent-board-worker/AGENTS.md", text: workerSkillAgents },
 	{ source: "agent-board-research/SKILL.md", text: researchSkillReadme },
 	{ source: "agent-board-research/AGENTS.md", text: researchSkillAgents },
+	{ source: "agent-board-maintenance/SKILL.md", text: maintenanceSkillReadme },
+	{ source: "agent-board-maintenance/AGENTS.md", text: maintenanceSkillAgents },
 	{ source: "agent-board-design-wireframe/SKILL.md", text: designWireframeSkillReadme },
 	{ source: "agent-board-design-wireframe/AGENTS.md", text: designWireframeSkillAgents },
 	{ source: "agent-board-design-review/SKILL.md", text: designReviewSkillReadme },
@@ -130,6 +134,7 @@ function collectCliSurface(program: Command): CliSurface {
 				const aliasPath = prefix ? `${prefix} ${alias}` : alias;
 				commands.add(aliasPath);
 				flagsByCommand.set(aliasPath, flags);
+				walk(sub, aliasPath, flags);
 			}
 			walk(sub, path, flags);
 		}

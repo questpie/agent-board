@@ -95,8 +95,8 @@ These commands already express durable board transitions well:
 
 | State | Existing commands |
 | --- | --- |
-| projects/goals | `init`, `projects`, `goals`, `goal new`, `goal use` |
-| task lifecycle | `new`, `tasks`, `status`, `show`, `claim`, `block`, `ready`, `unblock`, `review`, `verify`, `done` |
+| projects/goals | `init`, `projects`, `goals`, `goal new`, `goal use --force` for human default changes; agents should prefer `--goal`/`AGENT_BOARD_GOAL` |
+| task lifecycle | `new`, `tasks`, `status`, `show`, `claim`, `progress`, `block`, `ready`, `unblock`, `review`, `verify`, `done` |
 | task graph | `link --blocks`, `link --spec`, `plan`, `next` |
 | specs/knowledge create/read | `spec new`, `spec list`, `spec show`, `knowledge add`, `knowledge list` |
 | flows run/read/write | `flow new`, `flow list`, `flow cat`, `flow write`, `flow run`, `flow show` |

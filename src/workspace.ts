@@ -1,9 +1,10 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, symlink } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, stat, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
+import { parseFrontmatter } from "./markdown.js";
 import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace, WorkspaceMode } from "./types.js";
-import { atomicWrite, ensureDir, findLocalRoot, findWorktreeMainRoot, getHomeRoot, nowIso, projectSlugFromCwd, resolveRoot, slugify } from "./utils.js";
+import { atomicWrite, ensureDir, findLocalRoot, findWorktreeMainRoot, getHomeRoot, listFiles, nowIso, projectSlugFromCwd, resolveRoot, slugify } from "./utils.js";
 import { gitRoot } from "./git.js";
 import {
 	configSkillReadme,
@@ -12,6 +13,8 @@ import {
 	designWireframeSkillAgents,
 	designWireframeSkillReadme,
 	flowOrchestrationSkillReadme,
+	maintenanceSkillAgents,
+	maintenanceSkillReadme,
 	organizationReference,
 	pmOrchestratorSkillReadme,
 	researchSkillAgents,
@@ -38,7 +41,7 @@ const LOCAL_GITIGNORE = [
 	"",
 ].join("\n");
 
-export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research", "agent-board-design-wireframe", "agent-board-design-review"] as const;
+export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research", "agent-board-maintenance", "agent-board-design-wireframe", "agent-board-design-review"] as const;
 
 const SKILL_RUNTIMES = ["claude", "agents", "cursor"] as const;
 
@@ -254,9 +257,21 @@ export async function createGoal(
 export async function useGoal(
 	workspace: Workspace,
 	id: string,
+	options: { force?: boolean; interactive?: boolean } = {},
 ): Promise<ProjectConfig> {
 	const goalPath = join(workspace.projectPath, "goals", id);
 	if (!existsSync(goalPath)) throw new Error(`Goal not found: ${id}`);
+	const current = workspace.project.active_goal;
+	if (current === id) return workspace.project;
+	if (!options.force) {
+		const activity = await goalActiveWork(workspace, current);
+		if (activity.inProgressTasks > 0 || activity.incompleteFlowRuns > 0) {
+			throw new Error(goalUseRefusal(workspace, current, id, activity));
+		}
+		if (!options.interactive) {
+			throw new Error(goalUseRefusal(workspace, current, id));
+		}
+	}
 	const next: ProjectConfig = {
 		...workspace.project,
 		active_goal: id,
@@ -264,6 +279,77 @@ export async function useGoal(
 	};
 	await writeProjectConfig(workspace.projectPath, next);
 	return next;
+}
+
+interface GoalActiveWork {
+	inProgressTasks: number;
+	incompleteFlowRuns: number;
+	assignees: string[];
+}
+
+async function goalActiveWork(workspace: Workspace, goalId: string): Promise<GoalActiveWork> {
+	const goalPath = join(workspace.projectPath, "goals", goalId);
+	const [inProgress, incompleteFlowRuns] = await Promise.all([
+		inProgressTasks(join(goalPath, "tasks")),
+		incompleteFlowRunCount(join(goalPath, "flows", "runs")),
+	]);
+	return { ...inProgress, incompleteFlowRuns };
+}
+
+async function inProgressTasks(tasksDir: string): Promise<{ inProgressTasks: number; assignees: string[] }> {
+	const files = await listFiles(tasksDir, ".md");
+	let inProgressTasks = 0;
+	const assignees = new Set<string>();
+	for (const file of files) {
+		const raw = await readFile(file, "utf-8").catch(() => "");
+		if (!raw) continue;
+		try {
+			const doc = parseFrontmatter<Record<string, unknown>>(raw);
+			if (doc.meta.status !== "in_progress") continue;
+			inProgressTasks++;
+			if (typeof doc.meta.assignee === "string" && doc.meta.assignee.trim()) {
+				assignees.add(doc.meta.assignee.trim());
+			}
+		} catch {}
+	}
+	return { inProgressTasks, assignees: [...assignees].sort((a, b) => a.localeCompare(b)) };
+}
+
+async function incompleteFlowRunCount(runsDir: string): Promise<number> {
+	const entries = await readdir(runsDir, { withFileTypes: true }).catch(() => []);
+	let count = 0;
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const runPath = join(runsDir, entry.name);
+		const hasSummary = existsSync(join(runPath, "summary.md"));
+		const hasEvents = await stat(join(runPath, "events.jsonl")).then(() => true, () => false);
+		if (!hasSummary && hasEvents) count++;
+	}
+	return count;
+}
+
+function goalUseRefusal(
+	workspace: Workspace,
+	current: string,
+	next: string,
+	activity?: GoalActiveWork,
+): string {
+	const activeBits: string[] = [];
+	if (activity?.inProgressTasks) {
+		const assignees = activity.assignees.length ? ` (${activity.assignees.join(", ")})` : "";
+		activeBits.push(`${activity.inProgressTasks} in-progress task${activity.inProgressTasks === 1 ? "" : "s"}${assignees}`);
+	}
+	if (activity?.incompleteFlowRuns) {
+		activeBits.push(`${activity.incompleteFlowRuns} incomplete flow run${activity.incompleteFlowRuns === 1 ? "" : "s"}`);
+	}
+	const reason = activeBits.length
+		? ` because ${current} has active work: ${activeBits.join(", ")}`
+		: " in non-interactive mode";
+	return [
+		`Refusing to change shared active goal from ${current} to ${next}${reason}.`,
+		`Use --goal ${next} or AGENT_BOARD_GOAL=${next} for agent work instead.`,
+		"Pass --force only when intentionally changing the human default.",
+	].join(" ");
 }
 
 export function overlayDir(
@@ -384,9 +470,10 @@ export interface RelocateResult {
 	copied: string[];
 	cleaned: boolean;
 	backup: string | null;
+	warnings: string[];
 }
 
-const RELOCATE_TREES = ["goals", "specs", "knowledge", "flows"] as const;
+const RELOCATE_TREES = ["goals", "specs", "knowledge", "wireframes", "flows"] as const;
 
 // Move a board between home (~/.agent-board/projects/<slug>) and a repo-local
 // .agent-board/. Copies the durable trees, rewrites project.json for the target
@@ -408,6 +495,7 @@ async function relocateToLocal(cwd: string, cleanup: boolean, projectSlug?: stri
 	const source = join(homeRoot, "projects", slug);
 	const home = await readProjectConfig(source).catch(() => null);
 	if (!home) throw new Error(`No home board to relocate for project: ${slug}`);
+	const warnings = await sharedGlobalOverlayWarnings(homeRoot);
 
 	const repoPath = (await gitRoot(cwd)) ?? resolve(cwd);
 	const target = join(repoPath, BOARD_DIR_NAME);
@@ -431,7 +519,7 @@ async function relocateToLocal(cwd: string, cleanup: boolean, projectSlug?: stri
 		await removeRegistryProject(homeRoot, slug);
 		cleaned = true;
 	}
-	return { slug, to: "local", from: source, target, copied, cleaned, backup: cleaned ? null : source };
+	return { slug, to: "local", from: source, target, copied, cleaned, backup: cleaned ? null : source, warnings };
 }
 
 async function relocateToHome(cwd: string, cleanup: boolean): Promise<RelocateResult> {
@@ -439,6 +527,7 @@ async function relocateToHome(cwd: string, cleanup: boolean): Promise<RelocateRe
 	if (!source) throw new Error(`No local board found above: ${resolve(cwd)}`);
 	const local = await readProjectConfig(source).catch(() => null);
 	if (!local) throw new Error(`Local board is missing project.json: ${source}`);
+	const warnings = await localOverlayWarnings(source);
 
 	const slug = local.slug;
 	const repoPath = dirname(source);
@@ -464,7 +553,41 @@ async function relocateToHome(cwd: string, cleanup: boolean): Promise<RelocateRe
 		await rm(source, { recursive: true, force: true });
 		cleaned = true;
 	}
-	return { slug, to: "home", from: source, target, copied, cleaned, backup: cleaned ? null : source };
+	return { slug, to: "home", from: source, target, copied, cleaned, backup: cleaned ? null : source, warnings };
+}
+
+async function sharedGlobalOverlayWarnings(homeRoot: string): Promise<string[]> {
+	const [specs, knowledge, wireframes] = await Promise.all([
+		listFiles(join(homeRoot, "specs"), ".md"),
+		listFiles(join(homeRoot, "knowledge"), ".md"),
+		listWireframeDirs(join(homeRoot, "wireframes")),
+	]);
+	const parts = [
+		specs.length ? `${specs.length} global spec${specs.length === 1 ? "" : "s"}` : "",
+		knowledge.length ? `${knowledge.length} global knowledge note${knowledge.length === 1 ? "" : "s"}` : "",
+		wireframes.length ? `${wireframes.length} global wireframe${wireframes.length === 1 ? "" : "s"}` : "",
+	].filter(Boolean);
+	if (!parts.length) return [];
+	return [
+		`Shared home overlay not copied: ${parts.join(", ")} remain in ${homeRoot} and this local board will not see them by default.`,
+	];
+}
+
+async function localOverlayWarnings(localRoot: string): Promise<string[]> {
+	const [specs, knowledge, wireframes] = await Promise.all([
+		listFiles(join(localRoot, "specs"), ".md"),
+		listFiles(join(localRoot, "knowledge"), ".md"),
+		listWireframeDirs(join(localRoot, "wireframes")),
+	]);
+	if (specs.length + knowledge.length + wireframes.length === 0) return [];
+	return [
+		"Local boards store global and project specs/knowledge/wireframes in the same directory; relocate writes them into the home project overlay, not the shared home global overlay.",
+	];
+}
+
+async function listWireframeDirs(root: string): Promise<string[]> {
+	const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+	return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
 }
 
 async function copyTrees(source: string, target: string): Promise<string[]> {
@@ -486,14 +609,14 @@ async function removeRegistryProject(root: string, slug: string): Promise<void> 
 }
 
 async function ensureRootLayout(root: string): Promise<void> {
-	for (const dir of ["projects", "specs", "knowledge", "skills"]) {
+	for (const dir of ["projects", "specs", "knowledge", "wireframes", "skills"]) {
 		await ensureDir(join(root, dir));
 	}
 	await writeIfMissing(join(root, "registry.json"), JSON.stringify({ projects: {} }, null, 2));
 }
 
 async function ensureProjectLayout(projectPath: string): Promise<void> {
-	for (const dir of ["specs", "knowledge", "flows", "goals"]) {
+	for (const dir of ["specs", "knowledge", "wireframes", "flows", "goals"]) {
 		await ensureDir(join(projectPath, dir));
 	}
 }
@@ -504,7 +627,7 @@ async function ensureGoal(
 	title: string,
 ): Promise<string> {
 	const goalPath = join(projectPath, "goals", id);
-	for (const dir of ["tasks", "specs", "knowledge"]) {
+	for (const dir of ["tasks", "specs", "knowledge", "wireframes"]) {
 		await ensureDir(join(goalPath, dir));
 	}
 	await writeIfMissing(join(goalPath, "goal.md"), `---\nid: "${id}"\ntitle: "${title}"\n---\n\n# ${title}\n`);
@@ -534,6 +657,11 @@ async function installBundledSkills(root: string): Promise<void> {
 	await ensureDir(researchRoot);
 	await writeBundledSkill(join(researchRoot, "SKILL.md"), researchSkillReadme);
 	await writeBundledSkill(join(researchRoot, "AGENTS.md"), researchSkillAgents);
+
+	const maintenanceRoot = join(root, "skills", "agent-board-maintenance");
+	await ensureDir(maintenanceRoot);
+	await writeBundledSkill(join(maintenanceRoot, "SKILL.md"), maintenanceSkillReadme);
+	await writeBundledSkill(join(maintenanceRoot, "AGENTS.md"), maintenanceSkillAgents);
 
 	const designWireframeRoot = join(root, "skills", "agent-board-design-wireframe");
 	await ensureDir(designWireframeRoot);

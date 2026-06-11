@@ -9,7 +9,7 @@ import { atomicWrite, findWorktreeMainRoot } from "../src/utils.js";
 import { resolveWorkspace } from "../src/workspace.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
-import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseStructuredOutput, resolveCodexAcpBin, runLimited } from "../src/flow.js";
+import { DEFAULT_FLOW_AGENT_MODE, modeToPermission, parseCodexMcpMode, parseDurationMs, parseStructuredOutput, prepareCodexFlowEnvironment, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 import { Command } from "commander";
 import { findDrift } from "../src/skills-audit.js";
@@ -193,6 +193,14 @@ describe("flow agent mode", () => {
 		expect(modeToPermission("write")).toBe("auto-allow");
 		expect(modeToPermission(DEFAULT_FLOW_AGENT_MODE)).toBe("auto-reject");
 	});
+
+	test("parses activity watchdog durations", () => {
+		expect(parseDurationMs("250ms", "--agent-timeout")).toBe(250);
+		expect(parseDurationMs("180s", "--agent-timeout")).toBe(180_000);
+		expect(parseDurationMs("60m", "--agent-timeout")).toBe(3_600_000);
+		expect(() => parseDurationMs("0", "--agent-timeout")).toThrow("--agent-timeout");
+		expect(() => parseDurationMs("1h", "--agent-timeout")).toThrow("--agent-timeout");
+	});
 });
 
 describe("flow Codex ACP override", () => {
@@ -222,6 +230,49 @@ describe("flow Codex ACP override", () => {
 			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
 			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
 		}
+	});
+
+	test("isolates Codex home without copying global MCP servers", async () => {
+		const workspace = await tempWorkspace();
+		const sourceHome = await mkdtemp(join(tmpdir(), "agent-board-codex-source-"));
+		const boardHome = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		await writeFile(join(sourceHome, "auth.json"), '{"token":"test"}\n');
+		await writeFile(
+			join(sourceHome, "config.toml"),
+			[
+				"[features]",
+				"rmcp_client = true",
+				"",
+				"[mcp_servers.linear]",
+				'url = "https://mcp.linear.app/mcp"',
+				"",
+			].join("\n"),
+		);
+		const saved = saveEnv(["CODEX_HOME", "AGENT_BOARD_HOME", "AGENT_BOARD_FLOW_CODEX_HOME"]);
+		try {
+			process.env.CODEX_HOME = sourceHome;
+			process.env.AGENT_BOARD_HOME = boardHome;
+			const result = await prepareCodexFlowEnvironment(workspace, {
+				runtime: "codex",
+				codexMcpMode: "isolated",
+			});
+			const targetHome = result.env.CODEX_HOME!;
+			expect(targetHome).toContain(join(boardHome, "codex-flow-home", workspace.projectSlug));
+			expect(await readFile(join(targetHome, "auth.json"), "utf-8")).toBe('{"token":"test"}\n');
+			const config = await readFile(join(targetHome, "config.toml"), "utf-8");
+			expect(config).toContain("rmcp_client = false");
+			expect(config).toContain(`[projects.${JSON.stringify(workspace.repoPath)}]`);
+			expect(config).not.toContain("mcp_servers");
+			expect(result.diagnostics.join("\n")).toContain("isolated CODEX_HOME");
+		} finally {
+			restoreEnv(saved);
+		}
+	});
+
+	test("Codex MCP mode parser accepts isolated and inherit", () => {
+		expect(parseCodexMcpMode("isolated")).toBe("isolated");
+		expect(parseCodexMcpMode("inherit")).toBe("inherit");
+		expect(() => parseCodexMcpMode("global")).toThrow("Invalid Codex MCP mode");
 	});
 });
 
@@ -454,4 +505,17 @@ async function tempWorkspace(): Promise<Workspace> {
 			updated: new Date().toISOString(),
 		},
 	};
+}
+
+function saveEnv(keys: string[]): Record<string, string | undefined> {
+	const saved: Record<string, string | undefined> = {};
+	for (const key of keys) saved[key] = process.env[key];
+	return saved;
+}
+
+function restoreEnv(saved: Record<string, string | undefined>): void {
+	for (const [key, value] of Object.entries(saved)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
 }

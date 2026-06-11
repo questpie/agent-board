@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readdir } from "node:fs/promises";
+import { appendFile, chmod, copyFile, mkdir, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { appendEvidence, getTask, updateTask } from "./tasks.js";
@@ -9,6 +10,8 @@ import { atomicWrite, ensureDir, nowIso, slugify } from "./utils.js";
 
 export type FlowRuntime = "codex" | "claude" | "opencode";
 
+export type CodexMcpMode = "isolated" | "inherit";
+
 export const FLOW_TEMPLATES = ["default", "feature", "review", "fix"] as const;
 
 export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
@@ -16,6 +19,7 @@ export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
 export type FlowAgentMode = "read" | "write";
 
 export const DEFAULT_FLOW_AGENT_MODE: FlowAgentMode = "read";
+export const DEFAULT_FLOW_AGENT_TIMEOUT_MS = 3_600_000;
 
 const require = createRequire(import.meta.url);
 
@@ -88,8 +92,17 @@ export interface FlowRunOptions {
 	runtime: FlowRuntime;
 	concurrency: number;
 	agents: number;
+	agentTimeoutMs: number;
+	codexMcpMode: CodexMcpMode;
 	taskId?: string;
 	verbose?: boolean;
+	onRunStart?: (run: {
+		runId: string;
+		runPath: string;
+		summaryPath: string;
+		scriptPath?: string;
+	}) => void | Promise<void>;
+	onEventLine?: (line: string) => void | Promise<void>;
 }
 
 export interface FlowRunResult {
@@ -124,6 +137,7 @@ interface FlowAgentOptions {
 	cwd?: string;
 	timeoutMs?: number;
 	mode?: FlowAgentMode;
+	env?: Readonly<Record<string, string>>;
 	schema?: FlowJsonSchema;
 }
 
@@ -150,11 +164,12 @@ interface FlowDiagnostic {
 
 // Compact, throttled progress telemetry written to events.jsonl while an agent
 // streams. Never carries full agent text: `agent_delta` reports a running char
-// count plus a short trailing PREVIEW, and `agent_heartbeat` marks runtime/tool
-// activity that produced no new text. Full output still lives in agents/*.md.
+// count plus a short trailing PREVIEW, and `agent_heartbeat` marks either
+// runtime/tool activity with no new text or a fully idle stream that is still
+// inside the watchdog window. Full output still lives in agents/*.md.
 type FlowProgressEvent =
 	| { type: "agent_delta"; chars: number; preview: string }
-	| { type: "agent_heartbeat"; chars: number };
+	| { type: "agent_heartbeat"; chars: number; quietMs: number; timeoutMs: number; streamIdleMs: number };
 
 // Internal, runtime-agnostic stream unit so the real (streamText) path and the
 // AGENT_BOARD_FLOW_MOCK path drive the exact same throttling/emission logic.
@@ -167,6 +182,13 @@ function flowThrottleMs(): number {
 	if (raw === undefined) return 1000;
 	const parsed = Number.parseInt(raw, 10);
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1000;
+}
+
+function flowIdleHeartbeatMs(): number {
+	const raw = process.env.AGENT_BOARD_FLOW_IDLE_HEARTBEAT_MS;
+	if (raw === undefined) return 30_000;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : 30_000;
 }
 
 interface FlowContext {
@@ -185,6 +207,7 @@ interface FlowContext {
 		runtime: FlowRuntime;
 		concurrency: number;
 		agents: number;
+		agentTimeoutMs: number;
 	};
 	agent(prompt: string, options?: FlowAgentOptions): Promise<FlowAgentResult>;
 	parallel<T, R>(
@@ -270,9 +293,15 @@ export async function runFlow(
 	const summaryPath = join(runPath, "summary.md");
 
 	const state: FlowRunState = { agents: [] };
-	const context = createFlowContext(workspace, runPath, runId, options, state);
+	const codexEnv = await prepareCodexFlowEnvironment(workspace, options);
+	const eventSink = options.onEventLine
+		? createFlowEventLineSink(options.onEventLine)
+		: undefined;
+	const context = createFlowContext(workspace, runPath, runId, options, state, codexEnv.env, eventSink);
+	await options.onRunStart?.({ runId, runPath, summaryPath, scriptPath });
 	await context.log(`flow started: ${target}`);
 	await context.log(`runtime: ${options.runtime}`);
+	for (const diagnostic of codexEnv.diagnostics) await context.log(diagnostic);
 	if (scriptPath) await context.log(`script: ${scriptPath}`);
 
 	let summary: unknown;
@@ -348,6 +377,11 @@ export function parseFlowRuntime(value: string): FlowRuntime {
 	return value;
 }
 
+export function parseCodexMcpMode(value: string): CodexMcpMode {
+	if (value === "isolated" || value === "inherit") return value;
+	throw new Error("Invalid Codex MCP mode. Expected one of: isolated, inherit");
+}
+
 export function parseFlowTemplate(value: string): FlowTemplate {
 	if (!FLOW_TEMPLATES.includes(value as FlowTemplate)) {
 		throw new Error(`Invalid flow template. Expected one of: ${FLOW_TEMPLATES.join(", ")}`);
@@ -363,6 +397,84 @@ export function parsePositiveInt(value: string, name: string): number {
 	return parsed;
 }
 
+export function parseDurationMs(value: string, name: string): number {
+	const trimmed = value.trim();
+	const match = /^(\d+)(ms|s|m)?$/.exec(trimmed);
+	if (!match) {
+		throw new Error(`${name} must be a duration like 180s, 10m, or 180000ms.`);
+	}
+	const amount = Number.parseInt(match[1]!, 10);
+	const unit = match[2] ?? "ms";
+	const multiplier = unit === "m" ? 60_000 : unit === "s" ? 1000 : 1;
+	const ms = amount * multiplier;
+	if (!Number.isSafeInteger(ms) || ms < 1) throw new Error(`${name} must be a positive duration.`);
+	return ms;
+}
+
+export async function prepareCodexFlowEnvironment(
+	workspace: Workspace,
+	options: Pick<FlowRunOptions, "runtime" | "codexMcpMode">,
+): Promise<{ env: Readonly<Record<string, string>>; diagnostics: string[] }> {
+	if (options.runtime !== "codex") return { env: {}, diagnostics: [] };
+	if (process.env.AGENT_BOARD_FLOW_MOCK === "1") {
+		return {
+			env: {},
+			diagnostics: ["codex mcp: mock runtime, no Codex home prepared"],
+		};
+	}
+	if (options.codexMcpMode === "inherit") {
+		return {
+			env: {},
+			diagnostics: ["codex mcp: inheriting global Codex config"],
+		};
+	}
+
+	const sourceHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex");
+	const targetHome = process.env.AGENT_BOARD_FLOW_CODEX_HOME?.trim()
+		|| join(agentBoardCacheHome(), "codex-flow-home", workspace.projectSlug);
+	await ensureDir(targetHome);
+
+	const sourceAuth = join(sourceHome, "auth.json");
+	const targetAuth = join(targetHome, "auth.json");
+	if (existsSync(sourceAuth)) {
+		await copyFile(sourceAuth, targetAuth);
+		await chmod(targetAuth, 0o600).catch(() => {});
+	}
+
+	await atomicWrite(
+		join(targetHome, "config.toml"),
+		minimalCodexConfig(workspace.repoPath),
+	);
+
+	return {
+		env: { CODEX_HOME: targetHome },
+		diagnostics: [`codex mcp: isolated CODEX_HOME without global mcp_servers (${targetHome})`],
+	};
+}
+
+function agentBoardCacheHome(): string {
+	return process.env.AGENT_BOARD_HOME?.trim() || join(homedir(), ".agent-board");
+}
+
+function minimalCodexConfig(repoPath: string): string {
+	return [
+		"# Generated by agent-board for flow subagents.",
+		"# Keeps Codex auth, but intentionally omits user MCP server tables to avoid",
+		"# macOS Keychain prompts for Codex MCP Credentials during flow runs.",
+		"",
+		"[features]",
+		"rmcp_client = false",
+		"",
+		`[projects.${tomlString(repoPath)}]`,
+		`trust_level = "trusted"`,
+		"",
+	].join("\n");
+}
+
+function tomlString(value: string): string {
+	return JSON.stringify(value);
+}
+
 // One parsed line of events.jsonl. Only the fields the watch view renders are
 // typed; the writer in createFlowContext is the source of truth for the schema.
 type FlowEvent = {
@@ -374,10 +486,15 @@ type FlowEvent = {
 	mode?: string;
 	message?: string;
 	chars?: number;
+	quietMs?: number;
+	timeoutMs?: number;
+	streamIdleMs?: number;
 	preview?: string;
 	durationMs?: number;
 	error?: string;
 };
+
+type FlowEventSink = (event: FlowEvent) => void | Promise<void>;
 
 export type FlowWatchOptions = {
 	// Re-read interval while the run is still streaming.
@@ -459,6 +576,19 @@ function parseFlowEvent(line: string): FlowEvent | undefined {
 	}
 }
 
+function createFlowEventLineSink(
+	onLine: (line: string) => void | Promise<void>,
+): FlowEventSink {
+	let baselineMs = Number.NaN;
+	return async (event) => {
+		if (Number.isNaN(baselineMs) && event.ts) {
+			baselineMs = Date.parse(event.ts);
+		}
+		const line = formatFlowEvent(event, Number.isNaN(baselineMs) ? 0 : baselineMs);
+		if (line !== undefined) await onLine(line);
+	};
+}
+
 // Compact one-line render of a single event for the live watch view.
 function formatFlowEvent(event: FlowEvent, baselineMs: number): string | undefined {
 	const at = event.ts ? `${formatElapsed(Date.parse(event.ts) - baselineMs)} ` : "";
@@ -469,7 +599,17 @@ function formatFlowEvent(event: FlowEvent, baselineMs: number): string | undefin
 		const preview = event.preview ? `  ${event.preview}` : "";
 		return `${at}${agentName}: ${event.chars ?? 0} chars${preview}`;
 	}
-	if (event.type === "agent_heartbeat") return `${at}${agentName}: working (${event.chars ?? 0} chars)`;
+	if (event.type === "agent_heartbeat") {
+		const quiet = typeof event.quietMs === "number" && typeof event.timeoutMs === "number";
+		const streamIdleMs = typeof event.streamIdleMs === "number" ? event.streamIdleMs : 0;
+		const state = streamIdleMs > 0
+			? `waiting, no stream ${formatDuration(streamIdleMs)}`
+			: "active";
+		const detail = quiet
+			? `, ${state}, no text ${formatDuration(event.quietMs!)}/${formatDuration(event.timeoutMs!)}`
+			: "";
+		return `${at}${agentName}: working (${event.chars ?? 0} chars${detail})`;
+	}
 	if (event.type === "agent_finish") {
 		return `${at}${agentName}: done in ${event.durationMs ?? 0}ms (${event.chars ?? 0} chars)`;
 	}
@@ -480,6 +620,13 @@ function formatFlowEvent(event: FlowEvent, baselineMs: number): string | undefin
 function formatElapsed(ms: number): string {
 	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
 	return `+${(safe / 1000).toFixed(1)}s`;
+}
+
+function formatDuration(ms: number): string {
+	const safe = Number.isFinite(ms) && ms > 0 ? ms : 0;
+	if (safe >= 60_000) return `${(safe / 60_000).toFixed(safe % 60_000 === 0 ? 0 : 1)}m`;
+	if (safe >= 1000) return `${(safe / 1000).toFixed(safe % 1000 === 0 ? 0 : 1)}s`;
+	return `${Math.round(safe)}ms`;
 }
 
 function flowWatchDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -503,6 +650,8 @@ function createFlowContext(
 	runId: string,
 	options: FlowRunOptions,
 	state: FlowRunState,
+	codexEnv: Readonly<Record<string, string>>,
+	eventSink?: FlowEventSink,
 ): FlowContext {
 	let agentIndex = 0;
 	return {
@@ -521,6 +670,7 @@ function createFlowContext(
 			runtime: options.runtime,
 			concurrency: options.concurrency,
 			agents: options.agents,
+			agentTimeoutMs: options.agentTimeoutMs,
 		},
 		agent: async (prompt, agentOptions = {}) => {
 			const callIndex = ++agentIndex;
@@ -536,8 +686,7 @@ function createFlowContext(
 			const outputPath = join(agentDir, `${baseName}.md`);
 			const jsonPath = agentOptions.schema ? join(agentDir, `${baseName}.json`) : undefined;
 			const started = nowIso();
-			await writeEvent(runPath, "agent_start", { name, label, phase, mode, promptChars: effectivePrompt.length });
-			console.log(`agent ${displayAgent(name, label, phase)}: start (${mode})`);
+			await writeEvent(runPath, "agent_start", { name, label, phase, mode, promptChars: effectivePrompt.length }, eventSink);
 			const startedMs = Date.now();
 			const diagnostics: FlowDiagnostic[] = [];
 			let text = "";
@@ -546,7 +695,9 @@ function createFlowContext(
 				text = await runAgentPrompt(options.runtime, effectivePrompt, {
 					...agentOptions,
 					mode,
+					timeoutMs: agentOptions.timeoutMs ?? options.agentTimeoutMs,
 					cwd: agentOptions.cwd ?? workspace.repoPath,
+					env: mergeEnv(codexEnv, agentOptions.env),
 					diagnostics,
 					verbose: options.verbose,
 					onProgress: async (event) => {
@@ -557,9 +708,17 @@ function createFlowContext(
 								phase,
 								chars: event.chars,
 								preview: event.preview,
-							});
+							}, eventSink);
 						} else {
-							await writeEvent(runPath, "agent_heartbeat", { name, label, phase, chars: event.chars });
+							await writeEvent(runPath, "agent_heartbeat", {
+								name,
+								label,
+								phase,
+								chars: event.chars,
+								quietMs: event.quietMs,
+								timeoutMs: event.timeoutMs,
+								streamIdleMs: event.streamIdleMs,
+							}, eventSink);
 						}
 					},
 				});
@@ -579,7 +738,7 @@ function createFlowContext(
 					durationMs: Date.now() - startedMs,
 					diagnostics: diagnostics.length,
 					error: truncateForLog(error instanceof Error ? error.message : String(error), 300),
-				});
+				}, eventSink);
 				throw error;
 			}
 			await ensureDir(agentDir);
@@ -614,8 +773,7 @@ function createFlowContext(
 				jsonPath,
 				chars: text.length,
 				diagnostics: diagnostics.length,
-			});
-			console.log(`agent ${displayAgent(name, label, phase)}: done`);
+			}, eventSink);
 			return result;
 		},
 		parallel: async <T, R>(
@@ -642,8 +800,7 @@ function createFlowContext(
 			return rows.map((row) => row.value);
 		},
 		log: async (message) => {
-			await writeEvent(runPath, "log", { message });
-			console.log(message);
+			await writeEvent(runPath, "log", { message }, eventSink);
 		},
 	};
 }
@@ -917,6 +1074,7 @@ async function runAgentPrompt(
 	runtime: FlowRuntime,
 	prompt: string,
 	options: FlowAgentOptions & {
+		env?: Readonly<Record<string, string>>;
 		diagnostics: FlowDiagnostic[];
 		verbose?: boolean;
 		onProgress?: (event: FlowProgressEvent) => Promise<void> | void;
@@ -927,10 +1085,14 @@ async function runAgentPrompt(
 	let charsSinceEmit = 0;
 	let activitySinceEmit = false;
 	let lastEmitMs = Date.now();
+	let lastTextMs = lastEmitMs;
+	let lastStreamActivityMs = lastEmitMs;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_FLOW_AGENT_TIMEOUT_MS;
 
 	// Coalesce a window of stream activity into at most one compact event. Text
-	// wins over activity, so a heartbeat only fires for activity with no new text.
-	const emitProgress = async (force: boolean): Promise<void> => {
+	// wins over activity, so a heartbeat only fires for activity with no new text
+	// or for a fully idle stream that is still within the watchdog window.
+	const emitProgress = async (force: boolean, idle = false): Promise<void> => {
 		const now = Date.now();
 		if (!force && now - lastEmitMs < throttleMs) return;
 		if (charsSinceEmit > 0) {
@@ -940,24 +1102,50 @@ async function runAgentPrompt(
 			charsSinceEmit = 0;
 			activitySinceEmit = false;
 			lastEmitMs = now;
-		} else if (activitySinceEmit) {
+		} else if (activitySinceEmit || idle) {
 			if (options.onProgress) {
-				await options.onProgress({ type: "agent_heartbeat", chars: fullText.length });
+				await options.onProgress({
+					type: "agent_heartbeat",
+					chars: fullText.length,
+					quietMs: now - lastTextMs,
+					timeoutMs,
+					streamIdleMs: activitySinceEmit ? 0 : now - lastStreamActivityMs,
+				});
 			}
 			activitySinceEmit = false;
 			lastEmitMs = now;
 		}
 	};
 
+	const startIdleHeartbeat = (): ReturnType<typeof setInterval> | undefined => {
+		if (!options.onProgress) return undefined;
+		let inFlight = false;
+		return setInterval(() => {
+			if (inFlight) return;
+			inFlight = true;
+			void emitProgress(true, true).finally(() => {
+				inFlight = false;
+			});
+		}, flowIdleHeartbeatMs());
+	};
+
 	const drain = async (source: AsyncIterable<FlowStreamPart>): Promise<void> => {
-		for await (const part of source) {
-			if (part.type === "text") {
-				fullText += part.text;
-				charsSinceEmit += part.text.length;
-			} else {
-				activitySinceEmit = true;
+		const idleTimer = startIdleHeartbeat();
+		try {
+			for await (const part of source) {
+				const now = Date.now();
+				lastStreamActivityMs = now;
+				if (part.type === "text") {
+					fullText += part.text;
+					charsSinceEmit += part.text.length;
+					if (part.text.length > 0) lastTextMs = now;
+				} else {
+					activitySinceEmit = true;
+				}
+				await emitProgress(false);
 			}
-			await emitProgress(false);
+		} finally {
+			if (idleTimer) clearInterval(idleTimer);
 		}
 		await emitProgress(true);
 	};
@@ -973,14 +1161,17 @@ async function runAgentPrompt(
 	]);
 	const agentSettings = {
 		cwd: options.cwd,
+		env: options.env,
+		mcpServers: [],
 		permission: modeToPermission(options.mode ?? DEFAULT_FLOW_AGENT_MODE),
-		inactivityTimeoutMs: options.timeoutMs ?? 180_000,
+		inactivityTimeoutMs: timeoutMs,
 		onStderr: (line: string) => {
 			const diagnostic = summarizeDiagnostic(line);
 			if (diagnostic) options.diagnostics.push(diagnostic);
 			// Stderr is runtime telemetry, not output: it never enters events.jsonl
 			// as text, but it does mark the agent as alive for heartbeats.
 			activitySinceEmit = true;
+			lastStreamActivityMs = Date.now();
 			if (options.verbose) console.error(`[${options.name ?? runtime}] ${line}`);
 		},
 	};
@@ -993,7 +1184,7 @@ async function runAgentPrompt(
 	}
 	const result = streamText({
 		model: codexAcpBin
-			? spawnAgent.fromAdapter(adapters.codex({ binPath: codexAcpBin.path }), agentSettings)
+			? spawnAgent.fromAdapter(adapters.codex({ binPath: codexAcpBin.path, env: options.env }), agentSettings)
 			: spawnAgent(runtime, agentSettings),
 		system: options.system ?? defaultSystemPrompt(),
 		prompt,
@@ -1065,6 +1256,13 @@ function progressPreview(text: string): string {
 	const collapsed = text.replace(/\s+/g, " ").trim();
 	if (collapsed.length <= max) return collapsed;
 	return `...${collapsed.slice(collapsed.length - max)}`;
+}
+
+function mergeEnv(
+	base: Readonly<Record<string, string>>,
+	override?: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+	return override ? { ...base, ...override } : base;
 }
 
 // Bounded-concurrency runner. Once any task throws, `aborted` flips and the
@@ -1141,11 +1339,14 @@ async function writeEvent(
 	runPath: string,
 	type: string,
 	data: Record<string, unknown>,
+	eventSink?: FlowEventSink,
 ): Promise<void> {
+	const event = { ts: nowIso(), type, ...data } as FlowEvent;
 	await appendFile(
 		join(runPath, "events.jsonl"),
-		`${JSON.stringify({ ts: nowIso(), type, ...data })}\n`,
+		`${JSON.stringify(event)}\n`,
 	);
+	await eventSink?.(event);
 }
 
 async function writeDiagnostics(

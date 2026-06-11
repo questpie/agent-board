@@ -193,9 +193,14 @@ async function listScopedDocuments(
 	kind: "specs" | "knowledge",
 	scope?: OverlayScope,
 ): Promise<AgentDocument[]> {
-	const scopes = scope ? [scope] : (["global", "project", "goal"] as OverlayScope[]);
+	const scopes = scope ? [scope] : defaultDocumentScopes(workspace);
 	const docs = await Promise.all(scopes.map((item) => readScopedDocuments(workspace, kind, item)));
 	return docs.flat().sort((a, b) => `${a.scope}:${a.meta.id}`.localeCompare(`${b.scope}:${b.meta.id}`));
+}
+
+function defaultDocumentScopes(workspace: Workspace): OverlayScope[] {
+	if (workspace.mode === "local") return ["project", "goal"];
+	return ["global", "project", "goal"];
 }
 
 async function getScopedDocument(

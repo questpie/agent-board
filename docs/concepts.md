@@ -9,6 +9,7 @@
   registry.json
   specs/
   knowledge/
+  wireframes/
   skills/
     agent-board/
     agent-board-worker/
@@ -20,12 +21,14 @@
     flows/
     specs/
     knowledge/
+    wireframes/
     goals/<goal>/
       goal.md
       status.md
       tasks/
       specs/
       knowledge/
+      wireframes/
       flows/runs/
 ```
 
@@ -37,6 +40,7 @@ A repo-local board (`init --local`) is flatter — a single project with no `pro
   .gitignore          # ignores transient flows/runs
   specs/
   knowledge/
+  wireframes/
   flows/
   goals/<goal>/
     goal.md
@@ -44,6 +48,7 @@ A repo-local board (`init --local`) is flatter — a single project with no `pro
     tasks/
     specs/
     knowledge/
+    wireframes/
     flows/runs/
 ```
 
@@ -55,7 +60,10 @@ Linked git worktrees resolve to their main checkout's project in both modes: hom
 
 **Project** is a repository's board — a registered path in home mode, or the repo containing a local `.agent-board/`.
 
-**Goal** is the active slice of work inside a project. Tasks belong to a goal.
+**Goal** is a slice of work inside a project. Tasks belong to a goal. `project.json`
+stores `active_goal` as a convenience default for humans; parallel agents should
+pin their goal with `--goal <id>` or `AGENT_BOARD_GOAL=<id>` instead of running
+`goal use`, because `goal use` mutates shared project state.
 
 **Task** is the executable unit. It can be claimed, verified, reviewed, blocked, and done.
 
@@ -65,7 +73,7 @@ Linked git worktrees resolve to their main checkout's project in both modes: hom
 
 ## Overlays
 
-Specs and knowledge can live at three scopes:
+Specs, knowledge, and wireframes can live at three scopes:
 
 - `global`: shared across projects
 - `project`: shared by all goals in one repo
@@ -83,6 +91,7 @@ Qualified references:
 task:<project>/<goal>/<task>
 spec:<scope>/<id>
 knowledge:<scope>/<id>
+wireframe:<scope>/<id>
 ```
 
 ## Task Contract

@@ -44,9 +44,9 @@ agent-board skills install
 `agent-board skills install` links the bundled skills into supported local runtimes:
 
 ```txt
-~/.claude/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-design-wireframe,agent-board-design-review}
-~/.agents/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-design-wireframe,agent-board-design-review}
-~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-design-wireframe,agent-board-design-review}
+~/.claude/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.agents/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
 ```
 
 Check links, and that the bundled skill docs still match the CLI:
@@ -67,7 +67,7 @@ agent-board init --project my-project          # shared home board (~/.agent-boa
 # or version the board inside the repo, alongside your code:
 # agent-board init --local --project my-project  # repo board (.agent-board/)
 agent-board goal new "CLI MVP" --id cli-mvp
-agent-board goal use cli-mvp
+export AGENT_BOARD_GOAL=cli-mvp
 
 agent-board spec new "CLI MVP plan" --scope project
 agent-board new "Add task CLI" --status ready --priority high
@@ -81,20 +81,22 @@ A worker handles one explicit task:
 
 ```sh
 agent-board claim add-task-cli --agent worker-1
+agent-board progress add-task-cli "Parser path mapped; adding focused tests" --agent worker-1
 agent-board verify add-task-cli
 agent-board done add-task-cli
 ```
 
-`done` is blocked until acceptance criteria are checked and the task's `## Verify` commands pass.
+`progress` appends a timestamped checkpoint to the task's `## Evidence` section, so an agent can hand over intermediate findings without relying on git diff. `done` is blocked until acceptance criteria are checked and the task's `## Verify` commands pass.
 
 ## Skills
 
-Five skills are bundled:
+Six skills are bundled:
 
 - `agent-board`: controller/orchestrator. Plans goals, writes specs, creates and links tasks, delegates workers, reviews evidence, and controls flow waves.
 - `agent-board-worker`: executes one explicit task id. Claims, edits, verifies, and closes the task.
 - `agent-board-research`: read-only discovery. Turns uncertainty into specs, knowledge, blockers, and concrete tasks.
-- `agent-board-design-wireframe`: authors an HTML-mockup wireframe (design board) — zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Prototype screens before implementation.
+- `agent-board-maintenance`: read-only board hygiene. Reports stale claims/runs, broken links, and consolidation candidates before any cleanup.
+- `agent-board-design-wireframe`: authors an HTML-mockup wireframe (design board) — zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Import with `agent-board wireframe import`, then preview through `agent-board web`.
 - `agent-board-design-review`: read-only critique of a wireframe against its spec — screenshot and inspect each artboard, then file concrete, spec-linked findings.
 
 The split keeps hot skill context small: controllers do not carry worker implementation detail, workers do not choose the roadmap, and the design pair separates authoring a mockup from reviewing it.
@@ -119,10 +121,21 @@ agent-board flow cat audit
 agent-board flow write audit --from ./audit-flow.mjs
 agent-board flow run audit --input "Audit deploy pipeline" --task deploy-audit
 agent-board flow show <run-id>
-agent-board flow watch <run-id>     # live per-agent progress while a run executes
+agent-board flow watch <run-id>     # read-only follower for the same live progress stream
 ```
 
 Templates: `default`, `feature`, `review`, `fix`.
+
+`flow run` prints the run id immediately and renders live per-agent progress by default. Use `--no-watch` when another terminal will follow the run with `flow watch`.
+The per-agent activity watchdog defaults to 60m; thinking/tool/runtime activity
+counts as liveness and heartbeats distinguish active runtime events from a quiet
+stream that is still within the watchdog window.
+
+Codex flows default to `--codex-mcp isolated`: subagents get a generated
+`CODEX_HOME` with Codex auth copied over, but without your global
+`mcp_servers`, so macOS should not repeatedly prompt for `Codex MCP
+Credentials`. Use `--codex-mcp inherit` only when the flow needs your normal
+Codex MCP integrations.
 
 For larger jobs, flow scripts can export `meta`, run staged `pipeline(...)`
 work, label agents by `phase`, and request validated structured JSON with
@@ -143,6 +156,21 @@ For macOS Keychain stability with Codex flows, agent-board runs the bundled
 native `codex-acp` binary directly when it is available. Set
 `AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin a different ACP executable.
 
+## Maintenance
+
+Use the read-only maintenance report before manual cleanup, retry planning, or
+spec/knowledge consolidation:
+
+```sh
+agent-board maintenance
+agent-board maintenance --stale-after 7d
+agent-board maintenance --json
+```
+
+The report flags stale claims, stale or failed flow runs, broken task/spec links,
+and duplicate or template specs/knowledge. It never deletes run artifacts,
+retries flows, rewrites docs, or changes task state.
+
 ## Web Viewer
 
 `agent-board web` starts a local, read-only viewer for the board. No build step and no database: it serves a small JSON API over the same board the CLI reads, plus a single-page UI styled with the QUESTPIE design system. The browser opens automatically.
@@ -153,11 +181,12 @@ agent-board web --port 8080     # pick a port
 agent-board web --no-open       # do not open a browser
 ```
 
-Browse goals, tasks, specs, knowledge, and flow runs from any registered project. Switch project and goal from the sidebar; the Overview adapts to each goal and hides empty sections.
+Browse goals, tasks, specs, knowledge, wireframes, and flow runs from any registered project. Switch project and goal from the sidebar; the Overview adapts to each goal and hides empty sections.
 
 - **Goals** show progress and a status breakdown at a glance. Selecting one opens its Overview.
 - **Tasks** render the full graph: status, priority, dependencies, verify evidence, and the Markdown body.
 - **Specs and knowledge** filter by category (set with `spec new --category`, `spec categorize`, or the knowledge equivalents).
+- **Wireframes** serve imported HTML design-board bundles in an iframe, so live mockups can be reviewed next to their specs without a project-specific preview script.
 - **Flow runs** show agent output, the run summary, and a timeline. Running waves poll automatically.
 
 Every tab is deep-linkable (for example `#tasks/<id>` or `#flows/<run-id>`), so a link to a specific task or run is shareable.
@@ -184,7 +213,9 @@ A board lives in one of two places:
 
 Linked git worktrees resolve to their main checkout's project in both modes, so commands work from a worktree without `--project` or env overrides — while git operations still target the worktree itself.
 
-Move an existing board between modes with `agent-board relocate --to local|home`. Within either, tasks belong to goals, and specs/knowledge support global, project, and goal overlays.
+Move an existing board between modes with `agent-board relocate --to local|home`. Within either, tasks belong to goals, and specs/knowledge/wireframes support global, project, and goal overlays. A local board stores global/project specs, knowledge, and wireframes in one flat repo directory, so default lists show that directory once. When moving from home to local, shared home global specs/knowledge/wireframes are left in the home board and the CLI warns because the relocated repo board will not see them by default.
+
+`agent-board goal use <id>` changes the shared human default in `project.json`. Agents and parallel runs should pin work with `--goal <id>` or `AGENT_BOARD_GOAL=<id>` instead; non-interactive `goal use` requires `--force` and refuses to switch away from a goal with active work.
 
 When a command runs inside a repo whose `CLAUDE.md`/`AGENTS.md` don't mention agent-board, the CLI prints a one-line tip. Run `agent-board nudge` to add a managed block that points agents at the board (idempotent, removable with `--remove`); the CLI never edits those files on its own.
 
