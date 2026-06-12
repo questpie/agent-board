@@ -7,12 +7,20 @@ import type { OverlayScope, ProjectConfig, Registry, RegistryProject, Workspace,
 import { atomicWrite, ensureDir, findLocalRoot, findWorktreeMainRoot, getHomeRoot, listFiles, nowIso, projectSlugFromCwd, resolveRoot, slugify } from "./utils.js";
 import { gitRoot } from "./git.js";
 import {
+	bootstrapSkillAgents,
+	bootstrapSkillReadme,
 	configSkillReadme,
 	designReviewSkillAgents,
 	designReviewSkillReadme,
 	designWireframeSkillAgents,
 	designWireframeSkillReadme,
+	flowSkillAgents,
+	flowSkillReadme,
 	flowOrchestrationSkillReadme,
+	grillSkillAgents,
+	grillSkillReadme,
+	implementSkillAgents,
+	implementSkillReadme,
 	maintenanceSkillAgents,
 	maintenanceSkillReadme,
 	organizationReference,
@@ -23,6 +31,8 @@ import {
 	reviewWorkflowSkillReadme,
 	skillAgents,
 	skillReadme,
+	specSkillAgents,
+	specSkillReadme,
 	taskWorkflowReference,
 	workerSkillAgents,
 	workerSkillReadme,
@@ -41,7 +51,19 @@ const LOCAL_GITIGNORE = [
 	"",
 ].join("\n");
 
-export const BUNDLED_SKILLS = ["agent-board", "agent-board-worker", "agent-board-research", "agent-board-maintenance", "agent-board-design-wireframe", "agent-board-design-review"] as const;
+export const BUNDLED_SKILLS = [
+	"agent-board",
+	"agent-board-bootstrap",
+	"agent-board-design-review",
+	"agent-board-design-wireframe",
+	"agent-board-flow",
+	"agent-board-grill",
+	"agent-board-implement",
+	"agent-board-maintenance",
+	"agent-board-research",
+	"agent-board-spec",
+	"agent-board-worker",
+] as const;
 
 const SKILL_RUNTIMES = ["claude", "agents", "cursor"] as const;
 
@@ -652,6 +674,31 @@ async function installBundledSkills(root: string): Promise<void> {
 	await ensureDir(workerRoot);
 	await writeBundledSkill(join(workerRoot, "SKILL.md"), workerSkillReadme);
 	await writeBundledSkill(join(workerRoot, "AGENTS.md"), workerSkillAgents);
+
+	const implementRoot = join(root, "skills", "agent-board-implement");
+	await ensureDir(implementRoot);
+	await writeBundledSkill(join(implementRoot, "SKILL.md"), implementSkillReadme);
+	await writeBundledSkill(join(implementRoot, "AGENTS.md"), implementSkillAgents);
+
+	const bootstrapRoot = join(root, "skills", "agent-board-bootstrap");
+	await ensureDir(bootstrapRoot);
+	await writeBundledSkill(join(bootstrapRoot, "SKILL.md"), bootstrapSkillReadme);
+	await writeBundledSkill(join(bootstrapRoot, "AGENTS.md"), bootstrapSkillAgents);
+
+	const specRoot = join(root, "skills", "agent-board-spec");
+	await ensureDir(specRoot);
+	await writeBundledSkill(join(specRoot, "SKILL.md"), specSkillReadme);
+	await writeBundledSkill(join(specRoot, "AGENTS.md"), specSkillAgents);
+
+	const flowRoot = join(root, "skills", "agent-board-flow");
+	await ensureDir(flowRoot);
+	await writeBundledSkill(join(flowRoot, "SKILL.md"), flowSkillReadme);
+	await writeBundledSkill(join(flowRoot, "AGENTS.md"), flowSkillAgents);
+
+	const grillRoot = join(root, "skills", "agent-board-grill");
+	await ensureDir(grillRoot);
+	await writeBundledSkill(join(grillRoot, "SKILL.md"), grillSkillReadme);
+	await writeBundledSkill(join(grillRoot, "AGENTS.md"), grillSkillAgents);
 
 	const researchRoot = join(root, "skills", "agent-board-research");
 	await ensureDir(researchRoot);

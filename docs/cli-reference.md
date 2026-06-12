@@ -43,7 +43,7 @@ has in-progress tasks or incomplete flow runs. Agents should prefer `--goal` or
 ## Tasks
 
 ```sh
-agent-board tasks [--status <status>] [--all]
+agent-board tasks [--status <status>] [--all] [--archived]
 agent-board status
 agent-board next
 agent-board show <task-id>
@@ -72,19 +72,22 @@ Important behavior:
 - `verify` runs the task's `## Verify` commands from the repo root.
 - `done` is blocked while acceptance criteria are unchecked or verify has not passed.
 - `done --force --reason "<why>"` bypasses gates and records evidence.
+- Archived tasks are hidden from default task/status/next/plan views and do not
+  satisfy dependencies; use `tasks --archived` or `archive list` to inspect
+  them.
 
 ## Specs And Knowledge
 
 ```sh
 agent-board spec new <title> [--scope global|project|goal] [--category <name>]
-agent-board spec list [--scope global|project|goal] [--category <name>]
+agent-board spec list [--scope global|project|goal] [--category <name>] [--archived]
 agent-board spec show <spec-id>
 agent-board spec cat <spec-id>
 agent-board spec write <spec-id> --from <file|->
 agent-board spec categorize <spec-id> <category>
 
 agent-board knowledge add <title> [--kind decision|note|gotcha] [--scope global|project|goal] [--category <name>]
-agent-board knowledge list [--scope global|project|goal] [--category <name>]
+agent-board knowledge list [--scope global|project|goal] [--category <name>] [--archived]
 agent-board knowledge cat <knowledge-id>
 agent-board knowledge write <knowledge-id> --from <file|->
 agent-board knowledge categorize <knowledge-id> <category>
@@ -93,7 +96,25 @@ agent-board knowledge categorize <knowledge-id> <category>
 `cat` prints body content without frontmatter. `write` replaces body content
 while preserving CLI-owned metadata. `--category` groups specs and knowledge
 under a freeform label; `categorize` sets or changes it on an existing document,
-and `list --category <name>` filters by it.
+and `list --category <name>` filters by it. Archived specs and knowledge are
+hidden from default lists; pass `--archived` to include them.
+
+## Archive
+
+```sh
+agent-board archive task <task-id> --reason <text> [--superseded-by <ref>]
+agent-board archive spec <spec-id> --reason <text> [--superseded-by <ref>]
+agent-board archive knowledge <knowledge-id> --reason <text> [--superseded-by <ref>]
+agent-board archive flow-run <run-id> --reason <text> [--superseded-by <ref>]
+agent-board archive list [--kind task|spec|knowledge|flow-run]
+agent-board archive restore <kind> <id>
+```
+
+Archive is reversible and non-destructive. Task/spec/knowledge archives are
+frontmatter metadata; flow-run archives are `archive.json` marker files beside
+the run artifacts. Default task/spec/knowledge lists hide archived records, while
+`archive list`, `tasks --archived`, `spec list --archived`, and
+`knowledge list --archived` expose them.
 
 ## Wireframes
 
@@ -114,17 +135,24 @@ project-specific `package.json` preview script is required.
 ## Flows
 
 ```sh
-agent-board flow new <name> [--template default|feature|review|fix] [--force]
+agent-board flow new <name> [--template default|feature|review|fix|design|task-graph|refactor|hygiene|grill] [--force]
 agent-board flow list
+agent-board flow runtimes
+agent-board flow models --runtime <runtime>
 agent-board flow cat <name>
 agent-board flow write <name> --from <file|->
-agent-board flow run <name-or-path-or-goal> [--input <text>] [--task <task-id>] [--runtime codex|claude|opencode] [--agents <n>] [--concurrency <n>] [--agent-timeout <duration>] [--codex-mcp isolated|inherit] [--verbose] [--no-watch]
+agent-board flow run <name-or-path-or-goal> [--input <text>] [--task <task-id>] [--runtime codex|claude|cursor|copilot|gemini|opencode|droid|pi] [--model <model>] [--agents <n>] [--concurrency <n>] [--agent-timeout <duration>] [--codex-mcp isolated|inherit] [--verbose] [--no-watch]
 agent-board flow show <run-id>
 agent-board flow watch <run-id>
 ```
 
 `flow run` spawns locally installed coding agents; the chosen runtime's CLI must
 be installed and logged in — see [Flows: Prerequisites](flows.md#prerequisites).
+Use `flow runtimes` to list local runtimes detected through `spawn-agent`, and
+`flow models --runtime <runtime>` to inspect ACP model selector options when the
+runtime exposes them. `flow run --model <model>` requests that model through the
+runtime's model selector; if no selector is exposed, agent-board refuses to
+guess and points you at the runtime's official docs.
 `flow run` prints the run id immediately and renders live per-agent progress by
 default. Pass `--no-watch` to suppress live progress; the command still prints a
 `flow watch` command for following the run from another terminal. `flow watch`
@@ -151,6 +179,11 @@ agent. Templates are simple editable JavaScript scripts:
 - `feature`: researcher + planner + tester + synthesis
 - `review`: reviewer + test auditor + risk reviewer + synthesis; the summary starts with `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`
 - `fix`: reproducer + locator + test planner + synthesis
+- `design`: spec reader + wireframe planner + flow mapper + design review gate
+- `task-graph`: deterministic lane fan-out for dependencies, parallel waves, and board commands
+- `refactor`: deterministic per-file planning; up to 30 file paths become independent read lanes
+- `hygiene`: maintenance reader + archive planner + consolidator
+- `grill`: adversarial challenge of assumptions, stale facts, risks, and test gaps
 
 `flow run` prints:
 
@@ -176,7 +209,9 @@ agent-board maintenance [--stale-after <duration>] [--dry-run] [--json]
 flow runs, broken task/spec links, and spec/knowledge consolidation candidates.
 `--stale-after` accepts durations such as `30m`, `24h`, or `7d`. `--json`
 prints the same report as structured data for agents or scripts. The command
-does not delete run artifacts, retry flows, rewrite docs, or change task state.
+does not delete run artifacts, retry flows, archive records, rewrite docs, or
+change task state. Use the `archive` commands after reviewing maintenance
+findings.
 
 ## Skills
 

@@ -30,6 +30,10 @@ export interface TaskMeta {
 	updated: string;
 	verified: string;
 	verified_sha: string;
+	archived?: boolean;
+	archived_at?: string;
+	archived_reason?: string;
+	superseded_by?: string;
 }
 
 export interface TaskFile {

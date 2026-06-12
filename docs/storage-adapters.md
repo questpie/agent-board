@@ -99,7 +99,8 @@ These commands already express durable board transitions well:
 | task lifecycle | `new`, `tasks`, `status`, `show`, `claim`, `progress`, `block`, `ready`, `unblock`, `review`, `verify`, `done` |
 | task graph | `link --blocks`, `link --spec`, `plan`, `next` |
 | specs/knowledge create/read | `spec new`, `spec list`, `spec show`, `knowledge add`, `knowledge list` |
-| flows run/read/write | `flow new`, `flow list`, `flow cat`, `flow write`, `flow run`, `flow show` |
+| archive/hygiene | `archive task`, `archive spec`, `archive knowledge`, `archive flow-run`, `archive list`, `archive restore`, `maintenance` |
+| flows run/read/write | `flow new`, `flow list`, `flow runtimes`, `flow models --runtime <runtime>`, `flow cat`, `flow write`, `flow run`, `flow show` |
 
 The store-driver refactor starts by making body/script operations explicit:
 

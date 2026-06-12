@@ -17,7 +17,7 @@ const REGION_WITH_PADDING = /\n*<!-- agent-board:start[\s\S]*?agent-board:end --
 
 const NUDGE_BODY = `## Agent Board
 
-This repo uses **agent-board** as the durable store for tasks, specs, and knowledge — keep plans and decisions on the board, not only in chat. Reach for the bundled skills: \`agent-board\` (orchestrator: goals, specs, task graph, delegation), \`agent-board-worker\` (implement one task end to end), and \`agent-board-research\` (read-only discovery). Run \`agent-board status\` before planning to see current state.`;
+This repo uses **agent-board** as the durable store for goals, specs, tasks, knowledge, flow evidence, and board hygiene. Keep plans and decisions on the board, not only in chat. Reach for the bundled skills: \`agent-board\` (router/orchestrator), \`agent-board-bootstrap\` (new work interview), \`agent-board-research\` (current docs/repo discovery), \`agent-board-spec\` (spec/task graph), \`agent-board-flow\` (closed-loop execution), \`agent-board-implement\` or legacy \`agent-board-worker\` (one task), \`agent-board-grill\` (adversarial review), and \`agent-board-maintenance\` (cleanup/archive). Run \`agent-board status\` before planning.`;
 
 function block(): string {
 	return `${START}\n${NUDGE_BODY}\n${END}`;

@@ -8,11 +8,23 @@ import { appendEvidence, getTask, updateTask } from "./tasks.js";
 import type { Workspace } from "./types.js";
 import { atomicWrite, ensureDir, nowIso, slugify } from "./utils.js";
 
-export type FlowRuntime = "codex" | "claude" | "opencode";
+export const FLOW_RUNTIMES = ["codex", "claude", "cursor", "copilot", "gemini", "opencode", "droid", "pi"] as const;
+
+export type FlowRuntime = (typeof FLOW_RUNTIMES)[number];
 
 export type CodexMcpMode = "isolated" | "inherit";
 
-export const FLOW_TEMPLATES = ["default", "feature", "review", "fix"] as const;
+export const FLOW_TEMPLATES = [
+	"default",
+	"feature",
+	"review",
+	"fix",
+	"design",
+	"task-graph",
+	"refactor",
+	"hygiene",
+	"grill",
+] as const;
 
 export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
 
@@ -90,6 +102,7 @@ export interface FlowRunOptions {
 	target: string;
 	input?: string;
 	runtime: FlowRuntime;
+	model?: string;
 	concurrency: number;
 	agents: number;
 	agentTimeoutMs: number;
@@ -134,6 +147,7 @@ interface FlowAgentOptions {
 	label?: string;
 	phase?: string;
 	system?: string;
+	model?: string;
 	cwd?: string;
 	timeoutMs?: number;
 	mode?: FlowAgentMode;
@@ -145,6 +159,7 @@ interface FlowAgentResult {
 	name: string;
 	label?: string;
 	phase?: string;
+	model?: string;
 	prompt: string;
 	text: string;
 	json?: unknown;
@@ -160,6 +175,33 @@ interface FlowAgentResult {
 interface FlowDiagnostic {
 	level: "info" | "warn" | "error";
 	message: string;
+}
+
+export interface FlowRuntimeStatus {
+	runtime: FlowRuntime;
+	displayName: string;
+	available: boolean;
+}
+
+export interface FlowModelChoice {
+	value: string;
+	name: string;
+	description?: string;
+	group?: string;
+}
+
+export interface FlowModelConfig {
+	configId: string;
+	name: string;
+	category: string;
+	currentValue: string;
+	choices: FlowModelChoice[];
+}
+
+export interface FlowModelDiscovery {
+	runtime: FlowRuntime;
+	configs: FlowModelConfig[];
+	warning?: string;
 }
 
 // Compact, throttled progress telemetry written to events.jsonl while an agent
@@ -205,6 +247,7 @@ interface FlowContext {
 	};
 	options: {
 		runtime: FlowRuntime;
+		model?: string;
 		concurrency: number;
 		agents: number;
 		agentTimeoutMs: number;
@@ -377,6 +420,76 @@ export function parseFlowRuntime(value: string): FlowRuntime {
 	return value;
 }
 
+export async function listFlowRuntimes(): Promise<FlowRuntimeStatus[]> {
+	if (process.env.AGENT_BOARD_FLOW_MOCK === "1") {
+		return FLOW_RUNTIMES.map((runtime) => ({
+			runtime,
+			displayName: flowRuntimeDisplayName(runtime),
+			available: true,
+		}));
+	}
+	const { detectAvailableAgents, toAgentDisplayName } = await import("spawn-agent");
+	const available = new Set(
+		(detectAvailableAgents() as string[]).filter((value): value is FlowRuntime => isFlowRuntime(value)),
+	);
+	return FLOW_RUNTIMES.map((runtime) => ({
+		runtime,
+		displayName: toAgentDisplayName(runtime),
+		available: available.has(runtime),
+	}));
+}
+
+export async function discoverFlowModels(
+	workspace: Workspace,
+	runtime: FlowRuntime,
+): Promise<FlowModelDiscovery> {
+	validateRuntime(runtime);
+	if (process.env.AGENT_BOARD_FLOW_MOCK === "1") {
+		return {
+			runtime,
+			configs: [
+				{
+					configId: "model",
+					name: "Model",
+					category: "model",
+					currentValue: "mock-default",
+					choices: [
+						{ value: "mock-default", name: "Mock default" },
+						{ value: "mock-large", name: "Mock large" },
+					],
+				},
+			],
+		};
+	}
+	const codexEnv = await prepareCodexFlowEnvironment(workspace, { runtime, codexMcpMode: "isolated" });
+	try {
+		const { SpawnAgent } = await import("spawn-agent");
+		const agent = await SpawnAgent.connect(runtime, {
+			cwd: workspace.repoPath,
+			env: codexEnv.env,
+			mcpServers: [],
+			permission: "auto-reject",
+			inactivityTimeoutMs: 30_000,
+		});
+		try {
+			const configs = toModelConfigs(await agent.fetchConfigOptions(workspace.repoPath));
+			return {
+				runtime,
+				configs,
+				warning: configs.length ? undefined : "Runtime did not expose a model selector through ACP config options.",
+			};
+		} finally {
+			await agent.close();
+		}
+	} catch (error) {
+		return {
+			runtime,
+			configs: [],
+			warning: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
 export function parseCodexMcpMode(value: string): CodexMcpMode {
 	if (value === "isolated" || value === "inherit") return value;
 	throw new Error("Invalid Codex MCP mode. Expected one of: isolated, inherit");
@@ -484,6 +597,7 @@ type FlowEvent = {
 	label?: string;
 	phase?: string;
 	mode?: string;
+	model?: string;
 	message?: string;
 	chars?: number;
 	quietMs?: number;
@@ -668,6 +782,7 @@ function createFlowContext(
 		},
 		options: {
 			runtime: options.runtime,
+			model: options.model,
 			concurrency: options.concurrency,
 			agents: options.agents,
 			agentTimeoutMs: options.agentTimeoutMs,
@@ -678,6 +793,7 @@ function createFlowContext(
 			const label = agentOptions.label;
 			const phase = agentOptions.phase;
 			const mode = agentOptions.mode ?? DEFAULT_FLOW_AGENT_MODE;
+			const model = agentOptions.model ?? options.model;
 			const effectivePrompt = agentOptions.schema
 				? withStructuredOutputInstruction(prompt, agentOptions.schema)
 				: prompt;
@@ -686,7 +802,7 @@ function createFlowContext(
 			const outputPath = join(agentDir, `${baseName}.md`);
 			const jsonPath = agentOptions.schema ? join(agentDir, `${baseName}.json`) : undefined;
 			const started = nowIso();
-			await writeEvent(runPath, "agent_start", { name, label, phase, mode, promptChars: effectivePrompt.length }, eventSink);
+			await writeEvent(runPath, "agent_start", { name, label, phase, mode, model, promptChars: effectivePrompt.length }, eventSink);
 			const startedMs = Date.now();
 			const diagnostics: FlowDiagnostic[] = [];
 			let text = "";
@@ -695,6 +811,7 @@ function createFlowContext(
 				text = await runAgentPrompt(options.runtime, effectivePrompt, {
 					...agentOptions,
 					mode,
+					model,
 					timeoutMs: agentOptions.timeoutMs ?? options.agentTimeoutMs,
 					cwd: agentOptions.cwd ?? workspace.repoPath,
 					env: mergeEnv(codexEnv, agentOptions.env),
@@ -751,6 +868,7 @@ function createFlowContext(
 				name,
 				label,
 				phase,
+				model,
 				prompt: effectivePrompt,
 				text,
 				json,
@@ -1155,6 +1273,14 @@ async function runAgentPrompt(
 		return fullText;
 	}
 
+	if (options.model) {
+		await drain(directAgentStream(runtime, prompt, {
+			...options,
+			timeoutMs,
+		}));
+		return fullText;
+	}
+
 	const [{ streamText }, { spawnAgent, adapters }] = await Promise.all([
 		import("ai"),
 		import("spawn-agent"),
@@ -1193,6 +1319,87 @@ async function runAgentPrompt(
 	return fullText;
 }
 
+async function* directAgentStream(
+	runtime: FlowRuntime,
+	prompt: string,
+	options: FlowAgentOptions & {
+		env?: Readonly<Record<string, string>>;
+		diagnostics: FlowDiagnostic[];
+		verbose?: boolean;
+		timeoutMs: number;
+	},
+): AsyncGenerator<FlowStreamPart> {
+	const { SpawnAgent, adapters } = await import("spawn-agent");
+	const codexAcpBin = runtime === "codex" ? resolveCodexAcpBin() : undefined;
+	if (codexAcpBin) {
+		options.diagnostics.push({
+			level: "info",
+			message: `codex acp bin (${codexAcpBin.source}): ${codexAcpBin.path}`,
+		});
+	}
+	const agent = await SpawnAgent.connect(
+		codexAcpBin ? adapters.codex({ binPath: codexAcpBin.path, env: options.env }) : runtime,
+		{
+			cwd: options.cwd,
+			env: options.env,
+			mcpServers: [],
+			permission: modeToPermission(options.mode ?? DEFAULT_FLOW_AGENT_MODE),
+			inactivityTimeoutMs: options.timeoutMs,
+			systemPrompt: options.system ?? defaultSystemPrompt(),
+			onStderr: (line: string) => {
+				const diagnostic = summarizeDiagnostic(line);
+				if (diagnostic) options.diagnostics.push(diagnostic);
+				if (options.verbose) console.error(`[${options.name ?? runtime}] ${line}`);
+			},
+		},
+	);
+	let sessionId: Awaited<ReturnType<typeof agent.createSession>> | undefined;
+	try {
+		sessionId = await agent.createSession({
+			cwd: options.cwd,
+			mcpServers: [],
+			systemPrompt: options.system ?? defaultSystemPrompt(),
+		});
+		const modelPreference = options.model
+			? await resolveModelPreference(agent, sessionId, options.cwd, options.model)
+			: undefined;
+		const stream = agent.prompt(sessionId, {
+			prompt,
+			systemPrompt: options.system ?? defaultSystemPrompt(),
+			...(modelPreference ? { modelPreference } : {}),
+		});
+		for await (const event of stream) {
+			if (event.type === "text-delta") {
+				yield { type: "text", text: event.text };
+			} else if (isActivityPart(event.type)) {
+				yield { type: "activity" };
+			}
+		}
+		await stream.completion;
+	} finally {
+		if (sessionId) await agent.closeSession(sessionId).catch(() => {});
+		await agent.close();
+	}
+}
+
+async function resolveModelPreference(
+	agent: {
+		configOptionsFor(sessionId: unknown): readonly unknown[];
+		fetchConfigOptions(cwd?: string): Promise<readonly unknown[]>;
+	},
+	sessionId: unknown,
+	cwd: string | undefined,
+	model: string,
+): Promise<{ configId: string; value: string }> {
+	let configs = toModelConfigs(agent.configOptionsFor(sessionId));
+	if (!configs.length) configs = toModelConfigs(await agent.fetchConfigOptions(cwd));
+	const config = configs[0];
+	if (!config) {
+		throw new Error(`Runtime did not expose a model selector through ACP config options; cannot set model ${model}.`);
+	}
+	return { configId: config.configId, value: model };
+}
+
 // Maps the AI SDK fullStream onto FlowStreamPart: only `text-delta` carries
 // output text (so the assembled result stays byte-identical to generateText);
 // reasoning/tool events become opaque activity for heartbeats; control frames
@@ -1212,11 +1419,21 @@ async function* mapAgentStream(
 function isActivityPart(type: string): boolean {
 	return [
 		"reasoning-delta",
+		"thinking-delta",
 		"tool-input-start",
 		"tool-input-delta",
 		"tool-call",
+		"tool-call-update",
+		"tool-call-cancelled",
 		"tool-result",
 		"tool-error",
+		"plan",
+		"permission-request",
+		"config-options",
+		"available-commands",
+		"mode-changed",
+		"session-info",
+		"usage",
 		"source",
 		"file",
 	].includes(type);
@@ -1388,8 +1605,9 @@ function formatSummary(input: {
 			const diagnostics = agent.diagnostics ? `, diagnostics: ${agent.diagnostics}` : "";
 			const phase = agent.phase ? `, phase: ${agent.phase}` : "";
 			const label = agent.label && agent.label !== agent.name ? `, label: ${agent.label}` : "";
+			const model = agent.model ? `, model: ${agent.model}` : "";
 			const json = agent.jsonPath ? `, json: ${agent.jsonPath}` : "";
-			return `- ${agent.name}: ${agent.mode}${phase}${label}, ${agent.durationMs}ms, output: ${agent.outputPath}${json}${diagnostics}`;
+			return `- ${agent.name}: ${agent.mode}${phase}${label}${model}, ${agent.durationMs}ms, output: ${agent.outputPath}${json}${diagnostics}`;
 		})
 		.join("\n") || "- none";
 	const metaBlock = formatFlowMeta(input.meta);
@@ -1399,6 +1617,7 @@ function formatSummary(input: {
 		`- Project: ${input.workspace.projectSlug}`,
 		`- Goal: ${input.workspace.goalSlug}`,
 		`- Runtime: ${input.options.runtime}`,
+		input.options.model ? `- Model: ${input.options.model}` : undefined,
 		`- Target: ${input.target}`,
 		input.scriptPath ? `- Script: ${input.scriptPath}` : undefined,
 		`- Created: ${nowIso()}`,
@@ -1523,9 +1742,77 @@ function truncateForLog(value: string, max: number): string {
 }
 
 function validateRuntime(value: string): asserts value is FlowRuntime {
-	if (!["codex", "claude", "opencode"].includes(value)) {
-		throw new Error("Invalid runtime. Expected one of: codex, claude, opencode");
+	if (!isFlowRuntime(value)) {
+		throw new Error(`Invalid runtime. Expected one of: ${FLOW_RUNTIMES.join(", ")}`);
 	}
+}
+
+function isFlowRuntime(value: string): value is FlowRuntime {
+	return (FLOW_RUNTIMES as readonly string[]).includes(value);
+}
+
+function flowRuntimeDisplayName(runtime: FlowRuntime): string {
+	const names: Record<FlowRuntime, string> = {
+		codex: "Codex",
+		claude: "Claude Code",
+		cursor: "Cursor Agent",
+		copilot: "GitHub Copilot CLI",
+		gemini: "Gemini CLI",
+		opencode: "OpenCode",
+		droid: "Factory Droid",
+		pi: "Pi",
+	};
+	return names[runtime];
+}
+
+function toModelConfigs(options: readonly unknown[]): FlowModelConfig[] {
+	return options
+		.filter(isModelConfigOption)
+		.map((option) => ({
+			configId: String(option.id),
+			name: typeof option.name === "string" ? option.name : String(option.id),
+			category: typeof option.category === "string" ? option.category : "",
+			currentValue: typeof option.currentValue === "string" ? option.currentValue : "",
+			choices: flattenModelChoices(option.options),
+		}));
+}
+
+function isModelConfigOption(value: unknown): value is {
+	id: unknown;
+	name?: unknown;
+	category?: unknown;
+	currentValue?: unknown;
+	options?: unknown;
+} {
+	if (!value || typeof value !== "object") return false;
+	const option = value as Record<string, unknown>;
+	if (typeof option.id !== "string") return false;
+	const category = typeof option.category === "string" ? option.category : "";
+	const name = typeof option.name === "string" ? option.name : "";
+	return category === "model" || /model/i.test(option.id) || /model/i.test(name);
+}
+
+function flattenModelChoices(value: unknown): FlowModelChoice[] {
+	if (!Array.isArray(value)) return [];
+	const choices: FlowModelChoice[] = [];
+	for (const item of value) {
+		if (!item || typeof item !== "object") continue;
+		const record = item as Record<string, unknown>;
+		if (Array.isArray(record.options)) {
+			const group = typeof record.name === "string" ? record.name : String(record.group ?? "");
+			for (const nested of flattenModelChoices(record.options)) {
+				choices.push({ ...nested, group: nested.group ?? group });
+			}
+			continue;
+		}
+		if (typeof record.value !== "string") continue;
+		choices.push({
+			value: record.value,
+			name: typeof record.name === "string" ? record.name : record.value,
+			description: typeof record.description === "string" ? record.description : undefined,
+		});
+	}
+	return choices;
 }
 
 function defaultSystemPrompt(): string {
@@ -1588,6 +1875,68 @@ function flowTemplate(name: string, template: FlowTemplate): string {
 			},
 		], "Synthesize this into a code-review style report with findings first, then tests and next steps. Start with exactly one line: `Verdict: pass`, `Verdict: findings`, or `Verdict: inconclusive`. Use `Verdict: inconclusive` when worker outputs are missing, too thin, contradictory, runtime-limited, or otherwise do not support a usable review decision.");
 	}
+	if (template === "design") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "spec-reader",
+				brief: "Read the active goal/spec/tasks for a frontend or product implementation. Do not edit files. Return the durable product requirements, acceptance criteria, and decisions that must shape the design.",
+			},
+			{
+				name: "wireframe-planner",
+				brief: "Plan the design-board work before implementation. Do not edit files. Return screens, artboards, states, responsive breakpoints, and what should be mocked in an agent-board wireframe.",
+			},
+			{
+				name: "flow-mapper",
+				brief: "Map the end-to-end user flow and edge states. Do not edit files. Return navigation, empty/error/loading states, and handoff points into implementation tasks.",
+			},
+			{
+				name: "review-gate",
+				brief: "Define the pre-implementation design review gate. Do not edit files. Return what agent-board-design-review must inspect before code starts.",
+			},
+		], "Synthesize this into a design-first execution plan: spec updates, wireframe/design-board artifacts, optional presentation artifacts, review gates, implementation tasks, and verification. No production implementation starts before the design board and review gate are represented on the board.");
+	}
+	if (template === "task-graph") {
+		return taskGraphFlowTemplate(name, template, fallback);
+	}
+	if (template === "refactor") {
+		return refactorFlowTemplate(name, template, fallback);
+	}
+	if (template === "hygiene") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "maintenance-reader",
+				brief: "Inspect board state for stale tasks, stale claims, stale flow runs, duplicate specs, and duplicate knowledge. Do not edit files. Return only concrete cleanup candidates with ids.",
+			},
+			{
+				name: "archive-planner",
+				brief: "Plan non-destructive archive actions for superseded tasks/specs/knowledge/flow-runs. Do not edit files. Return exact archive commands with reasons and superseded-by links when known.",
+			},
+			{
+				name: "consolidator",
+				brief: "Find canonical replacements for duplicate or overlapping specs/knowledge. Do not edit files. Return what should become canonical, what should be archived, and what links need repair.",
+			},
+		], "Synthesize this into a board hygiene plan with safe archive commands, canonical records, follow-up tasks, and anything that should not be touched.");
+	}
+	if (template === "grill") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "assumption-attacker",
+				brief: "Attack the plan's hidden assumptions, scope shortcuts, and missing decisions. Do not edit files. Return blockers first.",
+			},
+			{
+				name: "docs-staleness-reviewer",
+				brief: "Identify decisions that depend on current docs, web facts, model ids, platform behavior, APIs, pricing, or release state. Do not edit files. Return what must be verified before implementation.",
+			},
+			{
+				name: "risk-reviewer",
+				brief: "Review security, migration, data, compatibility, concurrency, and rollout risks. Do not edit files. Return concrete risks and required mitigations.",
+			},
+			{
+				name: "test-gap-reviewer",
+				brief: "Review the proposed acceptance criteria and verify blocks for missing tests. Do not edit files. Return exact test gaps and suggested commands.",
+			},
+		], "Synthesize this into a grill report with blockers, must-verify-current-facts, follow-up tasks, accepted risks, and questions. Be adversarial but concrete.");
+	}
 	return roleFlowTemplate(name, template, fallback, [
 		{
 			name: "reproducer",
@@ -1602,6 +1951,137 @@ function flowTemplate(name: string, template: FlowTemplate): string {
 			brief: "Design focused regression tests for the fix. Do not edit files. Return test cases and commands.",
 		},
 	], "Synthesize this into a fix checklist with suspected cause, patch plan, regression tests, and risks.");
+}
+
+function taskGraphFlowTemplate(name: string, template: FlowTemplate, fallback: string): string {
+	return `export default async function flow({ input, agent, parallel, log }) {
+	const flowName = ${JSON.stringify(name)};
+	const goal = input || ${JSON.stringify(fallback)};
+	await log(\`running ${template} flow for \${flowName}: \${goal}\`);
+
+	const rawItems = goal
+		.split(/\\r?\\n/)
+		.map((line) => line.replace(/^[-*]\\s+/, "").trim())
+		.filter(Boolean);
+	const lanes = (rawItems.length > 1 ? rawItems : [
+		"graph-shape",
+		"dependency-order",
+		"parallel-waves",
+		"verification-gates",
+	]).slice(0, 30);
+
+	const results = await parallel(lanes, (lane, index) =>
+		agent(
+			[
+				"Inspect this work lane for a deterministic agent-board task graph.",
+				"Do not edit files.",
+				"Return required specs, task ids or task proposals, dependencies, blockers, verification gates, and whether this lane can run in parallel.",
+				"",
+				"Lane " + String(index + 1) + ":",
+				lane,
+				"",
+				"Overall goal:",
+				goal,
+			].join("\\n"),
+			{ name: "graph-" + String(index + 1).padStart(2, "0"), mode: "read" },
+		),
+	);
+
+	const findings = results
+		.map((result) => "## " + result.name + "\\n\\n" + result.text.trim())
+		.join("\\n\\n");
+
+	const summary = await agent(
+		[
+			"Do not edit files.",
+			"Synthesize a deterministic execution graph for agent-board.",
+			"Include specs, tasks, dependency edges, parallel waves, max useful agent count, review gates, archive/cleanup needs, and exact next controller commands.",
+			"Never mark work done from this flow alone.",
+			"",
+			"Goal:",
+			goal,
+			"",
+			"Lane outputs:",
+			findings,
+		].join("\\n"),
+		{ name: "graph-synthesizer", mode: "read" },
+	);
+
+	return summary.text;
+}
+`;
+}
+
+function refactorFlowTemplate(name: string, template: FlowTemplate, fallback: string): string {
+	return `export default async function flow({ input, agent, parallel, log }) {
+	const flowName = ${JSON.stringify(name)};
+	const goal = input || ${JSON.stringify(fallback)};
+	await log(\`running ${template} flow for \${flowName}: \${goal}\`);
+
+	const candidates = goal
+		.split(/\\r?\\n/)
+		.map((line) => line.replace(/^[-*]\\s+/, "").trim())
+		.filter((line) => line && !line.startsWith("#") && !line.includes(" "))
+		.slice(0, 30);
+	const targets = candidates.length ? candidates : [
+		"discover-refactor-files",
+		"detect-shared-contracts",
+		"plan-verification",
+	];
+
+	const results = await parallel(targets, (target, index) => {
+		const prompt = candidates.length
+			? [
+				"Inspect this single file for a deterministic refactor lane.",
+				"Do not edit files.",
+				"Return the exact intended change, local invariants, related tests, risks, and whether the lane can be implemented independently.",
+				"",
+				"File:",
+				target,
+				"",
+				"Refactor goal:",
+				goal,
+			].join("\\n")
+			: [
+				"Inspect the repository for a deterministic per-file refactor plan.",
+				"Do not edit files.",
+				"Return up to 30 file paths, grouping rules, dependency constraints, tests, and which lanes should not run concurrently.",
+				"",
+				"Refactor goal:",
+				goal,
+				"",
+				"Discovery lane:",
+				target,
+			].join("\\n");
+		return agent(prompt, {
+			name: candidates.length ? "file-" + String(index + 1).padStart(2, "0") : target,
+			mode: "read",
+		});
+	});
+
+	const findings = results
+		.map((result) => "## " + result.name + "\\n\\n" + result.text.trim())
+		.join("\\n\\n");
+
+	const summary = await agent(
+		[
+			"Do not edit files.",
+			"Synthesize a per-file refactor execution plan for agent-board.",
+			"Include file lanes, dependencies, which lanes can fan out up to 30 agents, which must be serialized, tests, review gates, and next controller commands.",
+			"If write execution is needed, say which explicit tasks or worktrees should receive write-mode workers.",
+			"",
+			"Goal:",
+			goal,
+			"",
+			"Lane outputs:",
+			findings,
+		].join("\\n"),
+		{ name: "refactor-synthesizer", mode: "read" },
+	);
+
+	return summary.text;
+}
+`;
 }
 
 function roleFlowTemplate(

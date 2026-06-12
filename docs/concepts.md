@@ -12,8 +12,14 @@
   wireframes/
   skills/
     agent-board/
-    agent-board-worker/
+    agent-board-bootstrap/
     agent-board-research/
+    agent-board-spec/
+    agent-board-flow/
+    agent-board-implement/
+    agent-board-worker/
+    agent-board-grill/
+    agent-board-maintenance/
     agent-board-design-wireframe/
     agent-board-design-review/
   projects/<project>/
@@ -94,6 +100,21 @@ knowledge:<scope>/<id>
 wireframe:<scope>/<id>
 ```
 
+## Design Gate
+
+Frontend and product work should be represented on the board before production
+code starts:
+
+```txt
+spec -> wireframe/design board -> design review -> implementation tasks
+```
+
+Wireframes are durable board artifacts, not throwaway chat context. Link the
+implementation tasks to the spec and mention the relevant `wireframe:<scope>/<id>`
+until first-class task-wireframe links exist. A design review can create blocking
+follow-up tasks, design gotchas in knowledge, or approval evidence for the next
+implementation wave.
+
 ## Task Contract
 
 A task is a Markdown file with frontmatter:
@@ -116,6 +137,10 @@ created: "2026-05-16T00:00:00.000Z"
 updated: "2026-05-16T00:00:00.000Z"
 verified: ""
 verified_sha: ""
+archived: "true"                 # optional; hidden from default active views
+archived_at: "2026-05-17T00:00:00.000Z"
+archived_reason: "Superseded by add-task-cli-v2"
+superseded_by: "task:demo/main/add-task-cli-v2"
 ---
 ```
 
@@ -149,6 +174,17 @@ bun run check-types
 bun test
 ```
 ````
+
+## Archive
+
+Archive is reversible metadata, not deletion. `agent-board archive task|spec|knowledge`
+adds frontmatter fields (`archived`, `archived_at`, `archived_reason`, and
+optional `superseded_by`). Default active views hide archived tasks/specs/knowledge;
+use `tasks --archived`, `spec list --archived`, `knowledge list --archived`, or
+`archive list` to inspect them. Archived tasks do not satisfy dependencies.
+
+Flow-run archives are `archive.json` marker files inside
+`goals/<goal>/flows/runs/<run-id>/`. The run artifacts remain on disk.
 
 ## Concurrency
 

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, setKnowledgeCategory, setSpecCategory, writeKnowledgeBody, writeSpecBody } from "./documents.js";
-import { createFlow, DEFAULT_FLOW_AGENT_TIMEOUT_MS, FlowRunError, listFlows, parseCodexMcpMode, parseDurationMs as parseFlowDurationMs, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
+import { createFlow, DEFAULT_FLOW_AGENT_TIMEOUT_MS, discoverFlowModels, FlowRunError, listFlowRuntimes, listFlows, parseCodexMcpMode, parseDurationMs as parseFlowDurationMs, parseFlowRuntime, parseFlowTemplate, parsePositiveInt, readFlowScript, runFlow, watchFlowRun, writeFlowScript } from "./flow.js";
 import { gitState } from "./git.js";
 import { createGoal, initWorkspace, installGlobalSkills, listGoals, listProjects, migrateWorkspace, relocateWorkspace, resolveWorkspace, skillsDoctor, useGoal, workspaceForGoal } from "./workspace.js";
 import { appendEvidence, appendTaskProgress, claimTask, createTask, getTask, linkTaskSpec, linkTasks, listTasks, parsePriority, parseStatus, pickNextTask, resolveTaskRef, setTaskStatus, unblockTask, updateTask, writeTaskBody } from "./tasks.js";
@@ -16,6 +16,7 @@ import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
 import { startWebServer } from "./web.js";
 import { getWireframe, importWireframe, listWireframes } from "./wireframes.js";
+import { archiveRecord, listArchivedRecords, parseArchiveKind, restoreArchivedRecord } from "./archive.js";
 
 const program = new Command();
 
@@ -174,11 +175,12 @@ program
 	.description("List tasks")
 	.option("--status <status>", "Filter by status")
 	.option("--all", "Include done tasks")
+	.option("--archived", "Include archived tasks")
 	.action(async (options) => {
 		await main(async () => {
 			if (options.status) parseStatus(options.status);
 			const workspace = currentWorkspace();
-			const tasks = (await listTasks(workspace)).filter((task) => {
+			const tasks = (await listTasks(workspace, { includeArchived: options.archived })).filter((task) => {
 				if (options.status) return task.meta.status === options.status;
 				return options.all || task.meta.status !== "done";
 			});
@@ -323,12 +325,13 @@ spec
 	.command("list")
 	.option("--scope <scope>", "global, project, or goal")
 	.option("--category <name>", "Filter by category")
+	.option("--archived", "Include archived specs")
 	.description("List specs")
 	.action(async (options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = options.scope ? parseScope(options.scope) : undefined;
-			const specs = (await listSpecs(workspace, scope)).filter(
+			const specs = (await listSpecs(workspace, scope, { includeArchived: options.archived })).filter(
 				(doc) => !options.category || doc.meta.category === options.category,
 			);
 			if (specs.length === 0) {
@@ -425,12 +428,13 @@ knowledge
 	.command("list")
 	.option("--scope <scope>", "global, project, or goal")
 	.option("--category <name>", "Filter by category")
+	.option("--archived", "Include archived knowledge notes")
 	.description("List knowledge notes")
 	.action(async (options) => {
 		await main(async () => {
 			const workspace = currentWorkspace();
 			const scope = options.scope ? parseScope(options.scope) : undefined;
-			const docs = (await listKnowledge(workspace, scope)).filter(
+			const docs = (await listKnowledge(workspace, scope, { includeArchived: options.archived })).filter(
 				(doc) => !options.category || doc.meta.category === options.category,
 			);
 			if (docs.length === 0) {
@@ -784,13 +788,85 @@ program
 		});
 	});
 
+const archiveCmd = program.command("archive").description("Archive, list, and restore board records without deleting them");
+
+for (const kind of ["task", "spec", "knowledge", "flow-run"] as const) {
+	archiveCmd
+		.command(kind)
+		.argument("<id>")
+		.requiredOption("--reason <text>", "Reason for archiving")
+		.option("--superseded-by <ref>", "Replacement task/spec/knowledge/flow reference")
+		.description(`Archive a ${kind}`)
+		.action(async (id, options) => {
+			await main(async () => {
+				const opts = readOptions<{ reason: string; supersededBy?: string }>(options);
+				const workspace = currentWorkspace();
+				const record = await archiveRecord(workspace, kind, id, {
+					reason: opts.reason,
+					supersededBy: opts.supersededBy,
+				});
+				console.log(`Archived ${record.kind} ${record.scope}/${record.id}`);
+				console.log(`Reason: ${record.reason}`);
+				if (record.supersededBy) console.log(`Superseded by: ${record.supersededBy}`);
+			});
+		});
+}
+
+archiveCmd
+	.command("list")
+	.option("--kind <kind>", "Filter by kind: task, spec, knowledge, or flow-run")
+	.description("List archived board records")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ kind?: string }>(options);
+			const workspace = currentWorkspace();
+			const kind = opts.kind ? parseArchiveKind(opts.kind) : undefined;
+			const records = await listArchivedRecords(workspace, kind);
+			if (!records.length) {
+				console.log("No archived records.");
+				return;
+			}
+			console.log(
+				table([
+					["Kind", "Scope", "ID", "Archived", "Reason", "Superseded By"],
+					...records.map((record) => [
+						record.kind,
+						record.scope,
+						record.id,
+						record.archivedAt || "-",
+						record.reason || "-",
+						record.supersededBy || "-",
+					]),
+				]),
+			);
+		});
+	});
+
+archiveCmd
+	.command("restore")
+	.argument("<kind>", "task, spec, knowledge, or flow-run")
+	.argument("<id>")
+	.description("Restore an archived board record")
+	.action(async (kindValue, id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const kind = parseArchiveKind(kindValue);
+			const restored = await restoreArchivedRecord(workspace, kind, id);
+			console.log(`Restored ${restored.kind} ${restored.id}`);
+		});
+	});
+
 const flow = program.command("flow").description("Create and run local multi-agent flows");
 
 flow
 	.command("new")
 	.argument("<name>")
 	.description("Create a project flow script")
-	.option("--template <template>", "Flow template: default, feature, review, or fix", "default")
+	.option(
+		"--template <template>",
+		"Flow template: default, feature, review, fix, design, task-graph, refactor, hygiene, or grill",
+		"default",
+	)
 	.option("--force", "Overwrite an existing flow")
 	.action(async (name, options) => {
 		await main(async () => {
@@ -828,12 +904,68 @@ flow
 	});
 
 flow
+	.command("runtimes")
+	.description("List local agent runtimes detected through spawn-agent")
+	.action(async () => {
+		await main(async () => {
+			const runtimes = await listFlowRuntimes();
+			console.log(
+				table([
+					["Runtime", "Available", "Display Name"],
+					...runtimes.map((runtime) => [
+						runtime.runtime,
+						runtime.available ? "yes" : "no",
+						runtime.displayName,
+					]),
+				]),
+			);
+		});
+	});
+
+flow
+	.command("models")
+	.requiredOption("--runtime <runtime>", "Agent runtime to inspect")
+	.description("Discover model selector options exposed by a local runtime")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ runtime: string }>(options);
+			const workspace = await currentOrInitWorkspace();
+			const runtime = parseFlowRuntime(opts.runtime);
+			const discovery = await discoverFlowModels(workspace, runtime);
+			if (discovery.warning) console.log(`Warning: ${discovery.warning}`);
+			if (!discovery.configs.length) {
+				console.log(`No model selector exposed by ${runtime}. Check the runtime's official docs for model configuration.`);
+				return;
+			}
+			for (const config of discovery.configs) {
+				console.log(`Model config: ${config.configId} (${config.name})`);
+				console.log(`Current: ${config.currentValue || "-"}`);
+				if (!config.choices.length) {
+					console.log("Options: runtime did not enumerate choices.");
+					continue;
+				}
+				console.log(
+					table([
+						["Value", "Name", "Group"],
+						...config.choices.map((choice) => [
+							choice.value,
+							choice.name,
+							choice.group ?? "-",
+						]),
+					]),
+				);
+			}
+		});
+	});
+
+flow
 	.command("run")
 	.argument("<target>")
 	.description("Run a flow script by name/path, or run an ad-hoc Codex flow")
 	.option("--input <text>", "Input passed to a flow script")
 	.option("--task <task-id>", "Append flow evidence to a task")
-	.option("--runtime <runtime>", "Agent runtime: codex, claude, or opencode", process.env.AGENT_BOARD_FLOW_RUNTIME ?? "codex")
+	.option("--runtime <runtime>", "Agent runtime: codex, claude, cursor, copilot, gemini, opencode, droid, or pi", process.env.AGENT_BOARD_FLOW_RUNTIME ?? "codex")
+	.option("--model <model>", "Runtime model id/alias to request when ACP exposes a model selector")
 	.option("--concurrency <n>", "Maximum concurrent agents", "3")
 	.option("--agents <n>", "Agent count for ad-hoc flow runs", "3")
 	.option("--agent-timeout <duration>", "Per-agent inactivity watchdog: e.g. 15m, 120m", process.env.AGENT_BOARD_FLOW_AGENT_TIMEOUT ?? `${DEFAULT_FLOW_AGENT_TIMEOUT_MS}ms`)
@@ -846,6 +978,7 @@ flow
 				input?: string;
 				task?: string;
 				runtime: string;
+				model?: string;
 				concurrency: string;
 				agents: string;
 				agentTimeout: string;
@@ -862,6 +995,7 @@ flow
 					input: opts.input,
 					taskId: opts.task,
 					runtime: parseFlowRuntime(opts.runtime),
+					model: opts.model,
 					concurrency: parsePositiveInt(opts.concurrency, "--concurrency"),
 					agents: parsePositiveInt(opts.agents, "--agents"),
 					agentTimeoutMs: parseFlowDurationMs(opts.agentTimeout, "--agent-timeout"),

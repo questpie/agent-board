@@ -10,22 +10,46 @@ Flows call no model API directly and need no API keys. Each `agent(...)` spawns 
 
 - `--runtime codex` (default): the Codex CLI must be installed and logged in. agent-board prefers the bundled native `codex-acp` binary when it resolves (override with `AGENT_BOARD_CODEX_ACP_BIN`); authentication still comes from your local Codex login.
 - `--runtime claude`: Claude Code must be installed and logged in.
+- `--runtime cursor`: Cursor Agent must be installed and logged in.
+- `--runtime copilot`: GitHub Copilot CLI must be installed and logged in.
+- `--runtime gemini`: Gemini CLI must be installed and logged in.
 - `--runtime opencode`: OpenCode must be installed and logged in.
+- `--runtime droid`: Factory Droid must be installed and logged in.
+- `--runtime pi`: Pi must be installed and logged in.
 
 `AGENT_BOARD_FLOW_MOCK=1` short-circuits agent spawning with deterministic mock output — useful for exercising a flow script end to end without spending tokens (the test suite runs flows this way).
+
+Use runtime/model discovery before hardcoding choices:
+
+```sh
+agent-board flow runtimes
+agent-board flow models --runtime codex
+```
+
+`flow models` asks the local runtime for ACP config options and reports model
+selectors when available. Some runtimes do not expose models through ACP; in
+that case, agent-board says so and the controller should consult official
+runtime docs instead of inventing model ids.
 
 ## Commands
 
 ```sh
 agent-board flow new <name> --template feature
+agent-board flow runtimes
+agent-board flow models --runtime codex
 agent-board flow cat <name>
 agent-board flow write <name> --from ./flow.mjs
-agent-board flow run <name> --input "<scope>" --task <task-id>
+agent-board flow run <name> --input "<scope>" --task <task-id> --model <model>
 agent-board flow show <run-id>
 agent-board flow watch <run-id>
 ```
 
 `flow run` prints the run id immediately and renders compact per-agent progress by default (start, throttled char counts and preview, heartbeats, finish, errors). Pass `--no-watch` when you want a quiet run; it still prints the `flow watch <run-id>` command so another terminal can follow the same `events.jsonl`. `flow watch <run-id>` is read-only — it never spawns agents or mutates run state — and exits when the run produces `summary.md` or on Ctrl-C.
+
+`flow run --model <model>` requests a run-level model preference when the runtime
+exposes a model selector. The requested model is recorded in `summary.md` and on
+each agent row. Per-agent model overrides are available inside scripts with
+`agent(prompt, { model: "<model>" })`.
 
 `--agent-timeout` controls the per-agent inactivity watchdog (default 120m).
 Long reviews are allowed to keep running while thinking/tool/runtime activity
@@ -46,6 +70,11 @@ Templates:
 - `feature`: feature planning, test planning, and synthesis
 - `review`: cross-agent review
 - `fix`: reproduction, localization, regression-test planning
+- `design`: design-first frontend/product gate; spec, wireframe/design-board plan, user-flow states, and review criteria before implementation
+- `task-graph`: deterministic lane fan-out for specs, task proposals, dependency edges, parallel waves, and verification gates
+- `refactor`: deterministic per-file planning; explicit file paths in the input become up to 30 independent read lanes
+- `hygiene`: board cleanup planning for stale runs, stale claims, duplicates, archive candidates, and canonical replacements
+- `grill`: adversarial challenge of assumptions, stale external facts, risks, and test gaps
 
 For quick read-only fan-out:
 
@@ -78,6 +107,10 @@ Available context:
 - `pipeline(items, ...stages)`: run ordered stages across many items with the CLI concurrency limit
 - `log(message)`: write compact lifecycle logs
 - `workspace`: project, goal, and repo metadata
+
+Agent options include `name`, `label`, `phase`, `mode`, `cwd`, `timeoutMs`,
+`schema`, and `model`. `model` uses the same ACP model selector as
+`flow run --model`.
 
 Flow scripts may also export metadata:
 
@@ -199,13 +232,20 @@ For non-trivial work:
 
 1. Confirm project and goal with `agent-board status`.
 2. Write or update a spec.
-3. Split the feature into linked tasks.
-4. Create a flow script with `agent-board flow new <name> --template <kind>`.
-5. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
-6. Summarize the phases to the user.
-7. Run the script after approval or explicit go-ahead.
-8. While the flow runs, read the live progress lines; if the flow is attached to a task and you learn something durable before completion, record it with `agent-board progress <task-id> --from -`.
-9. Read `summary.md`, update board state, and decide the next wave.
+3. For frontend/product work, create the design gate first: design flow, wireframe/design-board artifact, optional presentation artifact, and design-review task.
+4. Split the feature into linked tasks.
+5. Create a flow script with `agent-board flow new <name> --template <kind>`.
+6. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
+7. Summarize the phases to the user.
+8. Run the script after approval or explicit go-ahead.
+9. While the flow runs, read the live progress lines; if the flow is attached to a task and you learn something durable before completion, record it with `agent-board progress <task-id> --from -`.
+10. Read `summary.md`, update board state, and decide the next wave.
+
+For deterministic large fan-out, feed `task-graph` newline-separated lanes or
+`refactor` newline-separated file paths. Both templates cap generated lanes at
+30 and keep agents in read mode by default. Convert their synthesized plan into
+explicit tasks, worktrees, or write-mode flow lanes only after the controller
+has accepted the graph.
 
 The main chat remains controller. Spawned agents do not own roadmap, branch policy, commit policy, or final done decisions.
 
