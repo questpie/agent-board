@@ -29,6 +29,8 @@ import {
 	researchSkillReadme,
 	researchWorkflowSkillReadme,
 	reviewWorkflowSkillReadme,
+	safeWorkflowSkillAgents,
+	safeWorkflowSkillReadme,
 	skillAgents,
 	skillReadme,
 	specSkillAgents,
@@ -61,6 +63,7 @@ export const BUNDLED_SKILLS = [
 	"agent-board-implement",
 	"agent-board-maintenance",
 	"agent-board-research",
+	"agent-board-safe-workflow",
 	"agent-board-spec",
 	"agent-board-worker",
 ] as const;
@@ -694,6 +697,11 @@ async function installBundledSkills(root: string): Promise<void> {
 	await ensureDir(flowRoot);
 	await writeBundledSkill(join(flowRoot, "SKILL.md"), flowSkillReadme);
 	await writeBundledSkill(join(flowRoot, "AGENTS.md"), flowSkillAgents);
+
+	const safeWorkflowRoot = join(root, "skills", "agent-board-safe-workflow");
+	await ensureDir(safeWorkflowRoot);
+	await writeBundledSkill(join(safeWorkflowRoot, "SKILL.md"), safeWorkflowSkillReadme);
+	await writeBundledSkill(join(safeWorkflowRoot, "AGENTS.md"), safeWorkflowSkillAgents);
 
 	const grillRoot = join(root, "skills", "agent-board-grill");
 	await ensureDir(grillRoot);

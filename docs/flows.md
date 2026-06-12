@@ -75,6 +75,7 @@ Templates:
 - `refactor`: deterministic per-file planning; explicit file paths in the input become up to 30 independent read lanes
 - `hygiene`: board cleanup planning for stale runs, stale claims, duplicates, archive candidates, and canonical replacements
 - `grill`: adversarial challenge of assumptions, stale external facts, risks, and test gaps
+- `safe-workflow`: TDD/no-regression planning for use-case ids, scenario matrices, stable test ids, e2e/replay gates, and verify commands
 
 For quick read-only fan-out:
 
@@ -233,13 +234,14 @@ For non-trivial work:
 1. Confirm project and goal with `agent-board status`.
 2. Write or update a spec.
 3. For frontend/product work, create the design gate first: design flow, wireframe/design-board artifact, optional presentation artifact, and design-review task.
-4. Split the feature into linked tasks.
-5. Create a flow script with `agent-board flow new <name> --template <kind>`.
-6. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
-7. Summarize the phases to the user.
-8. Run the script after approval or explicit go-ahead.
-9. While the flow runs, read the live progress lines; if the flow is attached to a task and you learn something durable before completion, record it with `agent-board progress <task-id> --from -`.
-10. Read `summary.md`, update board state, and decide the next wave.
+4. For user-facing behavior, create the safe workflow gate first: use-case ids, scenario matrix, stable test ids/selectors, failing test or replay, and full-regression verify commands.
+5. Split the feature into linked tasks.
+6. Create a flow script with `agent-board flow new <name> --template <kind>`.
+7. Inspect or edit the script with `agent-board flow cat/write` to encode phases: fan-out, worker prompts, reviews, synthesis, and task/evidence updates.
+8. Summarize the phases to the user.
+9. Run the script after approval or explicit go-ahead.
+10. While the flow runs, read the live progress lines; if the flow is attached to a task and you learn something durable before completion, record it with `agent-board progress <task-id> --from -`.
+11. Read `summary.md`, update board state, and decide the next wave.
 
 For deterministic large fan-out, feed `task-graph` newline-separated lanes or
 `refactor` newline-separated file paths. Both templates cap generated lanes at

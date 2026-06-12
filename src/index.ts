@@ -864,7 +864,7 @@ flow
 	.description("Create a project flow script")
 	.option(
 		"--template <template>",
-		"Flow template: default, feature, review, fix, design, task-graph, refactor, hygiene, or grill",
+		"Flow template: default, feature, review, fix, design, task-graph, refactor, hygiene, grill, or safe-workflow",
 		"default",
 	)
 	.option("--force", "Overwrite an existing flow")

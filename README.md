@@ -44,9 +44,9 @@ agent-board skills install
 `agent-board skills install` links the bundled skills into supported local runtimes:
 
 ```txt
-~/.claude/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
-~/.agents/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
-~/.cursor/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.claude/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.agents/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.cursor/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
 ```
 
 Check links, and that the bundled skill docs still match the CLI:
@@ -104,14 +104,21 @@ Frontend/product work adds a design gate before production code:
 spec -> design flow -> wireframe/design board -> design review -> implementation tasks
 ```
 
+User-facing behavior adds a safe workflow gate before production code:
+
+```txt
+use cases -> scenario matrix -> failing test/replay -> implementation -> full regression
+```
+
 ## Skills
 
-Eleven skills are bundled:
+Twelve skills are bundled:
 
 - `agent-board`: thin router/orchestrator. Chooses the right workflow, creates goals/specs/tasks, delegates, reviews evidence, and controls flow waves.
 - `agent-board-bootstrap`: guided project or feature bootstrap interview with current-docs research and explicit tradeoffs.
 - `agent-board-research`: read-only discovery. Turns repo/current-docs uncertainty into specs, knowledge, blockers, and concrete tasks.
 - `agent-board-spec`: writes or updates specs, task graphs, dependencies, acceptance criteria, and verify blocks.
+- `agent-board-safe-workflow`: TDD and no-regression workflow. Defines use-case ids, scenario matrices, stable test ids/selectors, e2e/replay gates, and verify commands before implementation.
 - `agent-board-flow`: designs and runs closed-loop flow waves, including runtime/model discovery, deterministic fan-out, review, synthesis, design gates, task graphs, per-file refactor lanes, and hygiene loops.
 - `agent-board-implement`: executes one explicit task id. Claims, edits, verifies, and closes the task.
 - `agent-board-worker`: legacy name for the same one-task implementation workflow; kept for compatibility.
@@ -155,7 +162,7 @@ agent-board flow show <run-id>
 agent-board flow watch <run-id>     # read-only follower for the same live progress stream
 ```
 
-Templates: `default`, `feature`, `review`, `fix`, `design`, `task-graph`, `refactor`, `hygiene`, `grill`.
+Templates: `default`, `feature`, `review`, `fix`, `design`, `task-graph`, `refactor`, `hygiene`, `grill`, `safe-workflow`.
 
 `flow run` prints the run id immediately and renders live per-agent progress by default. Use `--no-watch` when another terminal will follow the run with `flow watch`.
 The per-agent inactivity watchdog defaults to 120m. Long reviews are allowed to
