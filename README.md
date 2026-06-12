@@ -44,9 +44,9 @@ agent-board skills install
 `agent-board skills install` links the bundled skills into supported local runtimes:
 
 ```txt
-~/.claude/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
-~/.agents/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
-~/.cursor/skills/{agent-board,agent-board-worker,agent-board-research,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.claude/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.agents/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.cursor/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
 ```
 
 Check links, and that the bundled skill docs still match the CLI:
@@ -88,24 +88,55 @@ agent-board done add-task-cli
 
 `progress` appends a timestamped checkpoint to the task's `## Evidence` section, so an agent can hand over intermediate findings without relying on git diff. `done` is blocked until acceptance criteria are checked and the task's `## Verify` commands pass.
 
+## Autopilot Loop
+
+Agent Board is meant to be the durable control plane for autopilot coding work. Chat stays the high-level controller; the board carries the facts, decisions, tasks, flow evidence, and cleanup trail:
+
+```txt
+bootstrap interview -> current research -> spec -> task graph -> flow waves -> verify/review -> knowledge -> archive/hygiene
+```
+
+When a decision depends on information that changes — frameworks, APIs, model ids, package behavior, pricing, platform rules — agents should use current official docs, repo search, web search, package metadata, or runtime discovery before writing the spec. The result should be captured in specs or knowledge, not only in chat.
+
+Frontend/product work adds a design gate before production code:
+
+```txt
+spec -> design flow -> wireframe/design board -> design review -> implementation tasks
+```
+
 ## Skills
 
-Six skills are bundled:
+Eleven skills are bundled:
 
-- `agent-board`: controller/orchestrator. Plans goals, writes specs, creates and links tasks, delegates workers, reviews evidence, and controls flow waves.
-- `agent-board-worker`: executes one explicit task id. Claims, edits, verifies, and closes the task.
-- `agent-board-research`: read-only discovery. Turns uncertainty into specs, knowledge, blockers, and concrete tasks.
-- `agent-board-maintenance`: read-only board hygiene. Reports stale claims/runs, broken links, and consolidation candidates before any cleanup.
+- `agent-board`: thin router/orchestrator. Chooses the right workflow, creates goals/specs/tasks, delegates, reviews evidence, and controls flow waves.
+- `agent-board-bootstrap`: guided project or feature bootstrap interview with current-docs research and explicit tradeoffs.
+- `agent-board-research`: read-only discovery. Turns repo/current-docs uncertainty into specs, knowledge, blockers, and concrete tasks.
+- `agent-board-spec`: writes or updates specs, task graphs, dependencies, acceptance criteria, and verify blocks.
+- `agent-board-flow`: designs and runs closed-loop flow waves, including runtime/model discovery, deterministic fan-out, review, synthesis, design gates, task graphs, per-file refactor lanes, and hygiene loops.
+- `agent-board-implement`: executes one explicit task id. Claims, edits, verifies, and closes the task.
+- `agent-board-worker`: legacy name for the same one-task implementation workflow; kept for compatibility.
+- `agent-board-grill`: adversarial challenge mode for weak assumptions, stale decisions, missing evidence, and risk review.
+- `agent-board-maintenance`: read-only board hygiene. Reports stale claims/runs, broken links, archive candidates, and consolidation candidates before cleanup.
 - `agent-board-design-wireframe`: authors an HTML-mockup wireframe (design board) — zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Import with `agent-board wireframe import`, then preview through `agent-board web`.
 - `agent-board-design-review`: read-only critique of a wireframe against its spec — screenshot and inspect each artboard, then file concrete, spec-linked findings.
 
-The split keeps hot skill context small: controllers do not carry worker implementation detail, workers do not choose the roadmap, and the design pair separates authoring a mockup from reviewing it.
+The split keeps hot skill context small: the router does not carry bootstrap, worker, or hygiene detail; implement workers do not choose the roadmap; and the design pair separates authoring a mockup from reviewing it.
 
 ## Optional Flows
 
 `agent-board flow` is agent-facing. The human describes desired work in natural language; the controller agent can create and edit a workflow script, summarize the phases, then run it after approval or explicit go-ahead.
 
-Flows call no model API directly. Each agent in a flow is a locally installed coding agent spawned over the Agent Client Protocol (via [spawn-agent](https://www.npmjs.com/package/spawn-agent)). Pick it with `--runtime codex|claude|opencode` (default `codex`); the matching CLI must be installed and logged in on your machine — flows reuse its auth, no extra API keys. See [Flows: Prerequisites](docs/flows.md#prerequisites).
+Flows call no model API directly. Each agent in a flow is a locally installed coding agent spawned over the Agent Client Protocol (via [spawn-agent](https://www.npmjs.com/package/spawn-agent)). Pick it with `--runtime codex|claude|cursor|copilot|gemini|opencode|droid|pi` (default `codex`); the matching CLI must be installed and logged in on your machine — flows reuse its auth, no extra API keys. See [Flows: Prerequisites](docs/flows.md#prerequisites).
+
+Discover what this machine can run before choosing:
+
+```sh
+agent-board flow runtimes
+agent-board flow models --runtime codex
+agent-board flow run audit --input "Audit deploy pipeline" --model <model>
+```
+
+Model discovery is best-effort through ACP config options. If a runtime does not expose a model selector, agent-board says so instead of inventing model ids; use that runtime's official docs.
 
 Quick read-only fan-out:
 
@@ -124,7 +155,7 @@ agent-board flow show <run-id>
 agent-board flow watch <run-id>     # read-only follower for the same live progress stream
 ```
 
-Templates: `default`, `feature`, `review`, `fix`.
+Templates: `default`, `feature`, `review`, `fix`, `design`, `task-graph`, `refactor`, `hygiene`, `grill`.
 
 `flow run` prints the run id immediately and renders live per-agent progress by default. Use `--no-watch` when another terminal will follow the run with `flow watch`.
 The per-agent inactivity watchdog defaults to 120m. Long reviews are allowed to
@@ -140,8 +171,10 @@ Codex MCP integrations.
 
 For larger jobs, flow scripts can export `meta`, run staged `pipeline(...)`
 work, label agents by `phase`, and request validated structured JSON with
-`agent(prompt, { schema })`. This supports evaluate/verify/synthesize/report
-style audits while still writing durable board evidence.
+`agent(prompt, { schema })`. The generated `task-graph` and `refactor`
+templates are designed for deterministic fan-out: they split explicit lanes or
+file paths into up to 30 read-only agents, synthesize dependencies and review
+gates, then leave implementation decisions with the controller.
 
 Flow runs write:
 
@@ -160,17 +193,24 @@ native `codex-acp` binary directly when it is available. Set
 ## Maintenance
 
 Use the read-only maintenance report before manual cleanup, retry planning, or
-spec/knowledge consolidation:
+spec/knowledge consolidation. Prefer archiving over deleting when a record is
+obsolete but still useful history:
 
 ```sh
 agent-board maintenance
 agent-board maintenance --stale-after 7d
 agent-board maintenance --json
+agent-board archive list
+agent-board archive spec old-plan --reason "Consolidated into architecture-plan" --superseded-by spec:project/architecture-plan
+agent-board archive flow-run 2026-06-10-stale-flow --reason "Superseded by retry"
+agent-board archive restore spec old-plan
 ```
 
 The report flags stale claims, stale or failed flow runs, broken task/spec links,
 and duplicate or template specs/knowledge. It never deletes run artifacts,
 retries flows, rewrites docs, or changes task state.
+
+Archived tasks/specs/knowledge are hidden from default lists and status views; use `tasks --archived`, `spec list --archived`, `knowledge list --archived`, or `archive list` to inspect them. Flow-run archives are marker files beside the run artifacts, not deletions.
 
 ## Web Viewer
 

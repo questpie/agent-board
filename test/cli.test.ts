@@ -24,10 +24,15 @@ describe("cli", () => {
 		expect((await readdir(join(home, "projects", "demo", "goals", "main"))).sort()).toContain("tasks");
 		expect((await readdir(join(home, "skills"))).sort()).toEqual([
 			"agent-board",
+			"agent-board-bootstrap",
 			"agent-board-design-review",
 			"agent-board-design-wireframe",
+			"agent-board-flow",
+			"agent-board-grill",
+			"agent-board-implement",
 			"agent-board-maintenance",
 			"agent-board-research",
+			"agent-board-spec",
 			"agent-board-worker",
 		]);
 		expect(
@@ -548,6 +553,50 @@ describe("cli", () => {
 		expect(json.knowledgeConsolidation.duplicates[0].items.length).toBe(2);
 	});
 
+	test("archive hides records from default lists and restores them explicitly", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "agent-board-archive-"));
+		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
+		const env = { ...process.env, AGENT_BOARD_HOME: home };
+
+		await run(cwd, env, ["init", "--project", "demo"]);
+		await run(cwd, env, ["new", "Old Task", "--status", "ready"]);
+		await run(cwd, env, ["spec", "new", "Old Spec"]);
+		await run(cwd, env, ["knowledge", "add", "Old Note", "--kind", "note"]);
+
+		expect(await run(cwd, env, ["archive", "task", "old-task", "--reason", "superseded"])).toContain(
+			"Archived task goal/old-task",
+		);
+		expect(await run(cwd, env, ["archive", "spec", "old-spec", "--reason", "consolidated"])).toContain(
+			"Archived spec project/old-spec",
+		);
+		expect(await run(cwd, env, ["archive", "knowledge", "old-note", "--reason", "duplicate"])).toContain(
+			"Archived knowledge project/old-note",
+		);
+
+		const runPath = join(home, "projects", "demo", "goals", "main", "flows", "runs", "2026-06-12-old-run");
+		await mkdir(runPath, { recursive: true });
+		await writeFile(join(runPath, "summary.md"), "# Flow Run\n");
+		expect(await run(cwd, env, ["archive", "flow-run", "2026-06-12-old-run", "--reason", "obsolete"])).toContain(
+			"Archived flow-run goal/2026-06-12-old-run",
+		);
+
+		expect(await run(cwd, env, ["tasks"])).not.toContain("old-task");
+		expect(await run(cwd, env, ["tasks", "--archived"])).toContain("old-task");
+		expect(await run(cwd, env, ["spec", "list"])).not.toContain("old-spec");
+		expect(await run(cwd, env, ["spec", "list", "--archived"])).toContain("old-spec");
+		expect(await run(cwd, env, ["knowledge", "list"])).not.toContain("old-note");
+		expect(await run(cwd, env, ["knowledge", "list", "--archived"])).toContain("old-note");
+
+		const archived = await run(cwd, env, ["archive", "list"]);
+		expect(archived).toContain("old-task");
+		expect(archived).toContain("old-spec");
+		expect(archived).toContain("old-note");
+		expect(archived).toContain("2026-06-12-old-run");
+
+		expect(await run(cwd, env, ["archive", "restore", "task", "old-task"])).toContain("Restored task old-task");
+		expect(await run(cwd, env, ["tasks"])).toContain("old-task");
+	});
+
 	test("link --blocks to a missing target fails without mutating the source", async () => {
 		const cwd = await mkdtemp(join(tmpdir(), "agent-board-link-"));
 		const home = await mkdtemp(join(tmpdir(), "agent-board-home-"));
@@ -665,7 +714,10 @@ describe("cli", () => {
 		expect(lstatSync(agentsLink).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board")).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-worker")).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-implement")).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-flow")).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board-research")).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board-bootstrap")).isSymbolicLink()).toBe(true);
 	});
 
 	test("migrates old flat project data into the main goal", async () => {
@@ -857,6 +909,10 @@ Old task.
 		expect(await readFile(flowPath, "utf-8")).toContain("export default async function flow");
 		expect(await run(cwd, env, ["flow", "cat", "audit-repo"])).toContain("researcher");
 		expect(await run(cwd, env, ["flow", "list"])).toContain("audit-repo");
+		expect(await run(cwd, env, ["flow", "runtimes"])).toContain("codex");
+		const models = await run(cwd, env, ["flow", "models", "--runtime", "codex"]);
+		expect(models).toContain("Model config: model");
+		expect(models).toContain("mock-large");
 
 		await run(cwd, env, ["new", "Flow Task", "--status", "ready"]);
 		const output = await run(cwd, env, [
@@ -869,6 +925,8 @@ Old task.
 			"flow-task",
 			"--concurrency",
 			"2",
+			"--model",
+			"mock-large",
 		]);
 		expect(output).toContain("Flow run");
 		expect(output).toContain("Next: read Summary first");
@@ -878,8 +936,9 @@ Old task.
 		const events = await readFile(join(runPath, "events.jsonl"), "utf-8");
 		const agentFiles = await readdir(join(runPath, "agents"));
 		expect(summary).toContain("Runtime: codex");
+		expect(summary).toContain("Model: mock-large");
 		expect(summary).toContain("Mock codex response");
-		expect(summary).toContain("- researcher: read,");
+		expect(summary).toContain("- researcher: read, model: mock-large,");
 		expect(summary).toContain("- synthesizer: read,");
 		expect(summary).toContain("## Controller Next");
 		expect(events).not.toContain("Mock codex response");
@@ -1096,6 +1155,11 @@ export default async function flow({ agent, pipeline, parallel }) {
 			["feature", "planner"],
 			["review", "risk-reviewer"],
 			["fix", "reproducer"],
+			["design", "wireframe-planner"],
+			["task-graph", "graph-synthesizer"],
+			["refactor", "refactor-synthesizer"],
+			["hygiene", "archive-planner"],
+			["grill", "assumption-attacker"],
 		] as const;
 
 		for (const [template, marker] of cases) {
@@ -1150,6 +1214,18 @@ export default async function flow({ agent, pipeline, parallel }) {
 		const summary = await readFile(lineValue(runOutput, "Summary: "), "utf-8");
 		expect(summary).toContain("Mock codex response");
 		expect(summary).toContain("reproducer");
+
+		const refactorRun = await run(cwd, env, [
+			"flow",
+			"run",
+			"refactor-flow",
+			"--input",
+			"src/flow.ts\nsrc/index.ts",
+			"--no-watch",
+		]);
+		const refactorSummary = await readFile(lineValue(refactorRun, "Summary: "), "utf-8");
+		expect(refactorSummary).toContain("Mock codex response from refactor-synthesizer");
+		expect(refactorSummary).toContain("file-01");
 	});
 
 	test("flow run validates task id before starting agents", async () => {

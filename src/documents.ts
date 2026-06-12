@@ -16,6 +16,10 @@ export interface AgentDocumentMeta {
 	status?: string;
 	created: string;
 	updated: string;
+	archived?: boolean;
+	archived_at?: string;
+	archived_reason?: string;
+	superseded_by?: string;
 }
 
 export interface AgentDocument {
@@ -25,9 +29,15 @@ export interface AgentDocument {
 	body: string;
 }
 
-const SPEC_ORDER = ["id", "title", "status", "category", "created", "updated"];
-const KNOWLEDGE_ORDER = ["id", "title", "kind", "category", "created", "updated"];
+const ARCHIVE_ORDER = ["archived", "archived_at", "archived_reason", "superseded_by"];
+const SPEC_ORDER = ["id", "title", "status", "category", "created", "updated", ...ARCHIVE_ORDER];
+const KNOWLEDGE_ORDER = ["id", "title", "kind", "category", "created", "updated", ...ARCHIVE_ORDER];
 const SCOPE_ORDER: OverlayScope[] = ["goal", "project", "global"];
+
+export interface ArchiveOptions {
+	reason: string;
+	supersededBy?: string;
+}
 
 export async function createSpec(
 	workspace: Workspace,
@@ -86,15 +96,17 @@ export async function createKnowledge(
 export async function listSpecs(
 	workspace: Workspace,
 	scope?: OverlayScope,
+	options: { includeArchived?: boolean } = {},
 ): Promise<AgentDocument[]> {
-	return listScopedDocuments(workspace, "specs", scope);
+	return listScopedDocuments(workspace, "specs", scope, options);
 }
 
 export async function listKnowledge(
 	workspace: Workspace,
 	scope?: OverlayScope,
+	options: { includeArchived?: boolean } = {},
 ): Promise<AgentDocument[]> {
-	return listScopedDocuments(workspace, "knowledge", scope);
+	return listScopedDocuments(workspace, "knowledge", scope, options);
 }
 
 export async function getSpec(
@@ -141,6 +153,36 @@ export async function setKnowledgeCategory(
 	category: string,
 ): Promise<AgentDocument> {
 	return setScopedDocumentCategory(workspace, "knowledge", id, "Knowledge", category, KNOWLEDGE_ORDER);
+}
+
+export async function archiveSpec(
+	workspace: Workspace,
+	id: string,
+	options: ArchiveOptions,
+): Promise<AgentDocument> {
+	return archiveScopedDocument(workspace, "specs", id, "Spec", options, SPEC_ORDER);
+}
+
+export async function archiveKnowledge(
+	workspace: Workspace,
+	id: string,
+	options: ArchiveOptions,
+): Promise<AgentDocument> {
+	return archiveScopedDocument(workspace, "knowledge", id, "Knowledge", options, KNOWLEDGE_ORDER);
+}
+
+export async function restoreSpec(
+	workspace: Workspace,
+	id: string,
+): Promise<AgentDocument> {
+	return restoreScopedDocument(workspace, "specs", id, "Spec", SPEC_ORDER);
+}
+
+export async function restoreKnowledge(
+	workspace: Workspace,
+	id: string,
+): Promise<AgentDocument> {
+	return restoreScopedDocument(workspace, "knowledge", id, "Knowledge", KNOWLEDGE_ORDER);
 }
 
 export async function listCategories(
@@ -192,10 +234,14 @@ async function listScopedDocuments(
 	workspace: Workspace,
 	kind: "specs" | "knowledge",
 	scope?: OverlayScope,
+	options: { includeArchived?: boolean } = {},
 ): Promise<AgentDocument[]> {
 	const scopes = scope ? [scope] : defaultDocumentScopes(workspace);
 	const docs = await Promise.all(scopes.map((item) => readScopedDocuments(workspace, kind, item)));
-	return docs.flat().sort((a, b) => `${a.scope}:${a.meta.id}`.localeCompare(`${b.scope}:${b.meta.id}`));
+	return docs
+		.flat()
+		.filter((doc) => options.includeArchived || !isDocumentArchived(doc))
+		.sort((a, b) => `${a.scope}:${a.meta.id}`.localeCompare(`${b.scope}:${b.meta.id}`));
 }
 
 function defaultDocumentScopes(workspace: Workspace): OverlayScope[] {
@@ -232,6 +278,41 @@ async function writeScopedDocumentBody(
 ): Promise<AgentDocument> {
 	const doc = await getScopedDocument(workspace, kind, ref, label);
 	doc.body = normalizeBody(body);
+	doc.meta.updated = nowIso();
+	await writeDocument(doc, order);
+	return doc;
+}
+
+async function archiveScopedDocument(
+	workspace: Workspace,
+	kind: "specs" | "knowledge",
+	ref: string,
+	label: string,
+	options: ArchiveOptions,
+	order: string[],
+): Promise<AgentDocument> {
+	const doc = await getScopedDocument(workspace, kind, ref, label);
+	doc.meta.archived = true;
+	doc.meta.archived_at = nowIso();
+	doc.meta.archived_reason = normalizeArchiveReason(options.reason);
+	doc.meta.superseded_by = options.supersededBy?.trim() || undefined;
+	doc.meta.updated = nowIso();
+	await writeDocument(doc, order);
+	return doc;
+}
+
+async function restoreScopedDocument(
+	workspace: Workspace,
+	kind: "specs" | "knowledge",
+	ref: string,
+	label: string,
+	order: string[],
+): Promise<AgentDocument> {
+	const doc = await getScopedDocument(workspace, kind, ref, label);
+	delete doc.meta.archived;
+	delete doc.meta.archived_at;
+	delete doc.meta.archived_reason;
+	delete doc.meta.superseded_by;
 	doc.meta.updated = nowIso();
 	await writeDocument(doc, order);
 	return doc;
@@ -294,7 +375,21 @@ function normalizeDocumentMeta(
 		status: typeof raw.status === "string" ? raw.status : undefined,
 		created: typeof raw.created === "string" ? raw.created : "",
 		updated: typeof raw.updated === "string" ? raw.updated : "",
+		archived: raw.archived === true || raw.archived === "true" ? true : undefined,
+		archived_at: typeof raw.archived_at === "string" ? raw.archived_at : undefined,
+		archived_reason: typeof raw.archived_reason === "string" ? raw.archived_reason : undefined,
+		superseded_by: typeof raw.superseded_by === "string" ? raw.superseded_by : undefined,
 	};
+}
+
+export function isDocumentArchived(doc: AgentDocument): boolean {
+	return doc.meta.archived === true;
+}
+
+function normalizeArchiveReason(reason: string): string {
+	const trimmed = reason.trim();
+	if (!trimmed) throw new Error("Archive reason cannot be empty.");
+	return trimmed;
 }
 
 function normalizeCategory(category?: string): string | undefined {

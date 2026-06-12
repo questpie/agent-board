@@ -5,6 +5,7 @@ import { getSpec, listKnowledge, listSpecs, type AgentDocument } from "./documen
 import { getTask, listTasks, resolveTaskRef } from "./tasks.js";
 import type { TaskFile, Workspace } from "./types.js";
 import { slugify } from "./utils.js";
+import { isFlowRunArchived } from "./archive.js";
 
 export interface MaintenanceOptions {
 	staleAfterMs: number;
@@ -150,6 +151,7 @@ async function findFlowRunIssues(
 			.filter((entry) => entry.isDirectory())
 			.map(async (entry): Promise<FlowRunIssue | null> => {
 				const path = join(root, entry.name);
+				if (isFlowRunArchived(workspace, entry.name)) return null;
 				const hasSummary = existsSync(join(path, "summary.md"));
 				const events = await readEvents(join(path, "events.jsonl"));
 				const updatedMs = await flowRunUpdatedMs(path);

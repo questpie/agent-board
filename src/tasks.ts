@@ -25,12 +25,26 @@ const TASK_ORDER = [
 	"updated",
 	"verified",
 	"verified_sha",
+	"archived",
+	"archived_at",
+	"archived_reason",
+	"superseded_by",
 ];
 
-export async function listTasks(workspace: Workspace): Promise<TaskFile[]> {
+export interface ArchiveOptions {
+	reason: string;
+	supersededBy?: string;
+}
+
+export async function listTasks(
+	workspace: Workspace,
+	options: { includeArchived?: boolean } = {},
+): Promise<TaskFile[]> {
 	const files = await listFiles(taskDir(workspace), ".md");
 	const tasks = await Promise.all(files.map(readTaskFile));
-	return tasks.sort((a, b) => a.meta.id.localeCompare(b.meta.id));
+	return tasks
+		.filter((task) => options.includeArchived || !isTaskArchived(task))
+		.sort((a, b) => a.meta.id.localeCompare(b.meta.id));
 }
 
 export async function createTask(
@@ -139,6 +153,32 @@ export async function getTask(
 	return readTaskFile(path);
 }
 
+export async function archiveTask(
+	workspace: Workspace,
+	id: string,
+	options: ArchiveOptions,
+): Promise<TaskFile> {
+	const reason = normalizeArchiveReason(options.reason);
+	return updateTask(workspace, id, (task) => {
+		task.meta.archived = true;
+		task.meta.archived_at = nowIso();
+		task.meta.archived_reason = reason;
+		task.meta.superseded_by = options.supersededBy?.trim() || undefined;
+	});
+}
+
+export async function restoreTask(
+	workspace: Workspace,
+	id: string,
+): Promise<TaskFile> {
+	return updateTask(workspace, id, (task) => {
+		delete task.meta.archived;
+		delete task.meta.archived_at;
+		delete task.meta.archived_reason;
+		delete task.meta.superseded_by;
+	});
+}
+
 export async function writeTaskBody(
 	workspace: Workspace,
 	id: string,
@@ -243,6 +283,9 @@ export async function claimTask(
 		const task = await getTask(workspace, id);
 		const warnings: string[] = [];
 
+		if (isTaskArchived(task)) {
+			throw new Error(`Task ${id} is archived. Restore it before claiming.`);
+		}
 		if (task.meta.status === "done") {
 			throw new Error(`Task ${id} is already done.`);
 		}
@@ -312,7 +355,7 @@ async function unmetDependencies(
 	for (const dep of task.meta.depends_on) {
 		const ref = resolveTaskRef(workspace, dep);
 		const depTask = await getTask(ref.workspace, ref.id).catch(() => null);
-		if (!depTask || depTask.meta.status !== "done") unmet.push(dep);
+		if (!depTask || depTask.meta.status !== "done" || isTaskArchived(depTask)) unmet.push(dep);
 	}
 	return unmet;
 }
@@ -350,7 +393,7 @@ export function parsePriority(value: string): TaskPriority {
 export function pickNextTask(tasks: TaskFile[]): TaskFile | undefined {
 	const weight: Record<TaskPriority, number> = { high: 3, normal: 2, low: 1 };
 	return tasks
-		.filter((task) => task.meta.status === "ready" || task.meta.status === "todo")
+		.filter((task) => !isTaskArchived(task) && (task.meta.status === "ready" || task.meta.status === "todo"))
 		.sort((a, b) => {
 			if (a.meta.status !== b.meta.status) {
 				return a.meta.status === "ready" ? -1 : 1;
@@ -415,11 +458,25 @@ function normalizeTaskMeta(
 		updated: String(raw.updated),
 		verified: typeof raw.verified === "string" ? raw.verified : "",
 		verified_sha: typeof raw.verified_sha === "string" ? raw.verified_sha : "",
+		archived: raw.archived === true || raw.archived === "true" ? true : undefined,
+		archived_at: typeof raw.archived_at === "string" ? raw.archived_at : undefined,
+		archived_reason: typeof raw.archived_reason === "string" ? raw.archived_reason : undefined,
+		superseded_by: typeof raw.superseded_by === "string" ? raw.superseded_by : undefined,
 	};
+}
+
+export function isTaskArchived(task: TaskFile): boolean {
+	return task.meta.archived === true;
 }
 
 function arrayOfStrings(value: unknown): string[] {
 	return Array.isArray(value) ? value.map(String) : [];
+}
+
+function normalizeArchiveReason(reason: string): string {
+	const trimmed = reason.trim();
+	if (!trimmed) throw new Error("Archive reason cannot be empty.");
+	return trimmed;
 }
 
 function hasUncheckedCriteria(body: string): boolean {
