@@ -24,6 +24,7 @@ export const FLOW_TEMPLATES = [
 	"refactor",
 	"hygiene",
 	"grill",
+	"safe-workflow",
 ] as const;
 
 export type FlowTemplate = (typeof FLOW_TEMPLATES)[number];
@@ -1936,6 +1937,26 @@ function flowTemplate(name: string, template: FlowTemplate): string {
 				brief: "Review the proposed acceptance criteria and verify blocks for missing tests. Do not edit files. Return exact test gaps and suggested commands.",
 			},
 		], "Synthesize this into a grill report with blockers, must-verify-current-facts, follow-up tasks, accepted risks, and questions. Be adversarial but concrete.");
+	}
+	if (template === "safe-workflow") {
+		return roleFlowTemplate(name, template, fallback, [
+			{
+				name: "use-case-cartographer",
+				brief: "Map the requested work into durable use cases and app flows before implementation. Do not edit files. Return proposed UC ids, flow ids, actors, states, locales, acceptance criteria, and gaps in the current spec.",
+			},
+			{
+				name: "scenario-matrix-auditor",
+				brief: "Design a regression scenario matrix. Do not edit files. Return route/API/PWA/visual/native layers, stable scenario names, filename conventions, required real API coverage, and which existing scenarios must keep passing.",
+			},
+			{
+				name: "tdd-planner",
+				brief: "Plan the red-green-refactor sequence. Do not edit files. Return the first failing test, implementation slice, refactor guard, and exact verification commands.",
+			},
+			{
+				name: "replay-gate-reviewer",
+				brief: "Define the no-regression gate. Do not edit files. Return replay/e2e commands, qprobe record/replay opportunities, log/API/browser assertions, and conditions that block done.",
+			},
+		], "Synthesize this into a safe workflow plan: use-case ids, scenario matrix, stable selectors/test ids, TDD red-green-refactor order, e2e or qprobe replay gates, verify commands, board tasks, and blockers. Work is not shippable until existing regressions and new scenarios pass.");
 	}
 	return roleFlowTemplate(name, template, fallback, [
 		{

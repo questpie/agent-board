@@ -15,6 +15,7 @@
     agent-board-bootstrap/
     agent-board-research/
     agent-board-spec/
+    agent-board-safe-workflow/
     agent-board-flow/
     agent-board-implement/
     agent-board-worker/
@@ -114,6 +115,21 @@ implementation tasks to the spec and mention the relevant `wireframe:<scope>/<id
 until first-class task-wireframe links exist. A design review can create blocking
 follow-up tasks, design gotchas in knowledge, or approval evidence for the next
 implementation wave.
+
+## Safe Workflow Gate
+
+User-facing behavior should be represented as a no-regression contract before
+production code starts:
+
+```txt
+use cases -> scenario matrix -> failing test/replay -> implementation -> full regression
+```
+
+Use stable use-case and flow ids such as `UC-001` and `F01`, then describe each
+scenario with a lower-kebab slug, layer, actors, states, locales, fixtures,
+real-API requirement, and verify command. UI-facing tests should use stable,
+locale-independent selectors/test ids based on product terms. The final task is
+not done until the new scenario and the existing regression suite pass.
 
 ## Task Contract
 

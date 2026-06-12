@@ -32,6 +32,7 @@ describe("cli", () => {
 			"agent-board-implement",
 			"agent-board-maintenance",
 			"agent-board-research",
+			"agent-board-safe-workflow",
 			"agent-board-spec",
 			"agent-board-worker",
 		]);
@@ -716,6 +717,7 @@ describe("cli", () => {
 		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-worker")).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-implement")).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-flow")).isSymbolicLink()).toBe(true);
+		expect(lstatSync(join(osHome, ".agents", "skills", "agent-board-safe-workflow")).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board-research")).isSymbolicLink()).toBe(true);
 		expect(lstatSync(join(osHome, ".cursor", "skills", "agent-board-bootstrap")).isSymbolicLink()).toBe(true);
 	});
@@ -1160,6 +1162,7 @@ export default async function flow({ agent, pipeline, parallel }) {
 			["refactor", "refactor-synthesizer"],
 			["hygiene", "archive-planner"],
 			["grill", "assumption-attacker"],
+			["safe-workflow", "use-case-cartographer"],
 		] as const;
 
 		for (const [template, marker] of cases) {

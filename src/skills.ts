@@ -1,6 +1,6 @@
 export const skillReadme = `---
 name: agent-board
-description: "Router and orchestrator for agent-board autopilot work: choose bootstrap, research, spec, flow, implement, grill, or maintenance workflows; keep durable goals/specs/tasks/knowledge/evidence on the board. Triggers: agent-board, autopilot, flow, sprint, plan, goal, delegate, multitask, orchestrate, organize, board hygiene, archive, backlog."
+description: "Router and orchestrator for agent-board autopilot work: choose bootstrap, research, spec, safe-workflow, flow, implement, grill, or maintenance workflows; keep durable goals/specs/tasks/knowledge/evidence on the board. Triggers: agent-board, autopilot, flow, sprint, plan, goal, delegate, multitask, orchestrate, organize, board hygiene, archive, backlog."
 ---
 
 # Agent Board
@@ -20,6 +20,7 @@ Use when controlling agent-board work. This is the router/controller skill: choo
 - Unknown repo, feasibility, current docs, or facts likely to change -> \`agent-board-research\`.
 - Turning intent into specs, tasks, dependencies, and verify blocks -> \`agent-board-spec\`.
 - Frontend/product implementation with screens or UX -> \`agent-board-design-wireframe\`, then \`agent-board-design-review\`, before implementation.
+- User-facing behavior, TDD, use cases, e2e scenarios, regression protection, or safe workflow -> \`agent-board-safe-workflow\`.
 - Multi-agent execution, review waves, or closed loops -> \`agent-board-flow\`.
 - One concrete implementation task -> \`agent-board-implement\` (legacy alias: \`agent-board-worker\`).
 - Adversarial challenge, missing assumptions, weak specs, or pre-implementation critique -> \`agent-board-grill\`.
@@ -31,11 +32,12 @@ Use when controlling agent-board work. This is the router/controller skill: choo
 2. Read relevant task/specs/knowledge before deciding.
 3. For broad work, create or choose a goal, write/update a spec, then split into linked tasks. Subtasks are small linked tasks, not checklist prose.
 4. For frontend/product work, create the design gate before code: spec -> design flow or wireframe board -> design review -> implementation tasks.
-5. Before choosing a runtime/model, run \`agent-board flow runtimes\` or \`agent-board flow models --runtime codex\`; if the runtime cannot report models, use official docs instead of guessing.
-6. Delegate ready implementation to workers that use \`agent-board-implement\` or \`agent-board-worker\` and a specific task id.
-7. Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, then run multi-agent fan-out, reviews, or synthesis after user approval unless execution was already explicit.
-8. Read \`summary.md\` first; inspect \`agents/*.md\` or \`diagnostics.jsonl\` only when needed.
-9. Update tasks/specs/knowledge from evidence. Archive superseded records with concrete commands such as \`agent-board archive spec <id> --reason "<why>"\`, then choose the next wave.
+5. For user-facing behavior or risky changes, create the safe workflow gate before code: use cases -> scenario matrix -> failing test/replay -> implementation -> full regression.
+6. Before choosing a runtime/model, run \`agent-board flow runtimes\` or \`agent-board flow models --runtime codex\`; if the runtime cannot report models, use official docs instead of guessing.
+7. Delegate ready implementation to workers that use \`agent-board-implement\` or \`agent-board-worker\` and a specific task id.
+8. Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, then run multi-agent fan-out, reviews, or synthesis after user approval unless execution was already explicit.
+9. Read \`summary.md\` first; inspect \`agents/*.md\` or \`diagnostics.jsonl\` only when needed.
+10. Update tasks/specs/knowledge from evidence. Archive superseded records with concrete commands such as \`agent-board archive spec <id> --reason "<why>"\`, then choose the next wave.
 
 ## Delegation Contract
 
@@ -48,7 +50,7 @@ Use when controlling agent-board work. This is the router/controller skill: choo
 - \`agent-board status\`, \`agent-board plan --related\`
 - \`agent-board goal new\`, \`agent-board spec new\`, \`agent-board knowledge add\`; use \`--goal <id>\` or \`AGENT_BOARD_GOAL=<id>\` instead of switching shared active goal during agent work
 - \`agent-board new\`, \`agent-board link <from> --blocks <to>\`, \`agent-board progress <task> "<checkpoint>"\`, \`agent-board block <task> "<reason>"\`
-- \`agent-board task/spec/knowledge cat|write\`, \`agent-board wireframe import <directory>\`, \`agent-board flow runtimes\`, \`agent-board flow models --runtime codex\`, \`agent-board flow new <name> --template feature|review|fix|design|task-graph|refactor|hygiene|grill\`, \`agent-board flow cat|write\`, \`agent-board flow run <name>\`
+- \`agent-board task/spec/knowledge cat|write\`, \`agent-board wireframe import <directory>\`, \`agent-board flow runtimes\`, \`agent-board flow models --runtime codex\`, \`agent-board flow new <name> --template feature|review|fix|design|task-graph|refactor|hygiene|grill|safe-workflow\`, \`agent-board flow cat|write\`, \`agent-board flow run <name>\`
 - \`agent-board archive list\`, \`agent-board archive task <id> --reason "<why>"\`, \`agent-board archive restore task <id>\`
 - \`agent-board nudge\` when the CLI tips that CLAUDE.md/AGENTS.md don't mention agent-board
 
@@ -69,6 +71,7 @@ export const skillAgents = `# Agent Board Rules
 - Controller mode: plan, create specs/tasks, link blockers, delegate, review evidence. Do not claim/edit implementation tasks unless explicitly asked.
 - Broad features become a goal/spec plus linked tasks; subtasks are first-class tasks, not hidden checklist prose.
 - Frontend/product implementation starts with spec + wireframe/design-board + design review before production code.
+- User-facing behavior starts with use cases + scenario matrix + regression gate before production code.
 - Worker delegation must include a concrete task id and the \`agent-board-implement\` skill (legacy \`agent-board-worker\` is still valid).
 - Use \`agent-board flow new <name> --template <kind>\`, inspect/edit with \`flow cat/write\`, summarize phases, then \`flow run\` after approval or explicit go-ahead.
 - \`flow run\` prints live progress by default; use \`agent-board progress <task-id> "<checkpoint>"\` for durable task-level handoffs during long work.
@@ -190,7 +193,7 @@ Use this skill before building a new project, package, or major feature. The goa
 5. Write a spec with problem, constraints, tradeoffs, chosen stack, rejected alternatives, acceptance criteria, and verify strategy.
 6. For frontend/product work, add a design gate to the spec: screens, states, responsive breakpoints, wireframe/design-board artifact, optional presentation artifact, and design-review acceptance criteria.
 7. Split the spec into linked tasks with \`agent-board new\` and \`agent-board link <from> --blocks <to>\`.
-8. Recommend a flow: design, task-graph, research, implementation, review, refactor, hygiene, or grill.
+8. Recommend a flow: design, safe-workflow, task-graph, research, implementation, review, refactor, hygiene, or grill.
 
 ## Output
 
@@ -252,7 +255,7 @@ Use this skill when chat should remain the high-level orchestrator and execution
 1. Confirm project/goal: \`agent-board status\`.
 2. Discover local runtimes with \`agent-board flow runtimes\`.
 3. Before specifying a model, ask the runtime: \`agent-board flow models --runtime codex\`. If no model selector is exposed, use official runtime docs instead of guessing.
-4. Create or inspect a flow: \`agent-board flow new <name> --template feature|review|fix|design|task-graph|refactor|hygiene|grill\`, then \`agent-board flow cat <name>\`.
+4. Create or inspect a flow: \`agent-board flow new <name> --template feature|review|fix|design|task-graph|refactor|hygiene|grill|safe-workflow\`, then \`agent-board flow cat <name>\`.
 5. Edit with \`agent-board flow write <name> --from <file|->\` when phases need to be explicit.
 6. Run with \`agent-board flow run <name> --input "<scope>" --task <task-id>\`; use \`--model <model>\` only when the runtime supports a model selector.
 7. Read \`summary.md\` first, then update tasks/specs/knowledge/evidence.
@@ -268,6 +271,7 @@ Flow output is not done by itself. The controller must convert it into task prog
 - \`refactor\`: split up to 30 file paths into per-file read lanes and produce a safe implementation graph.
 - \`hygiene\`: find stale, duplicate, or superseded board records and propose archive/consolidation commands.
 - \`grill\`: adversarial challenge of assumptions, stale facts, risks, and test gaps.
+- \`safe-workflow\`: use-case ids, scenario matrix, TDD order, e2e/replay gates, and no-regression verify commands.
 `;
 
 export const flowSkillAgents = `# Agent Board Flow Rules
@@ -277,6 +281,75 @@ export const flowSkillAgents = `# Agent Board Flow Rules
 - Use the named templates for deterministic lanes; do not bury process in chat.
 - Read flow summary first; update board state after every run.
 - Spawned agents do not own branch, commit, roadmap, archive, or final done decisions.
+`;
+
+export const safeWorkflowSkillReadme = `---
+name: agent-board-safe-workflow
+description: "TDD and no-regression workflow for user-facing behavior: define use cases, scenario matrices, stable test IDs, e2e/replay gates, red-green-refactor tasks, and verify blocks before implementation. Use for safe workflow, TDD, use cases, e2e scenarios, regression gates, qprobe replay, and behavior coverage."
+---
+
+# Agent Board Safe Workflow
+
+Use this skill when a change can regress product behavior. The goal is not more tests by habit; it is a durable behavior contract that makes implementation safe.
+
+## Loop
+
+1. Read the goal/spec/tasks and identify the behavior being changed.
+2. Create or update a spec section for use cases. Prefer stable ids such as \`UC-001\` for use cases and \`F01\` for end-to-end flows.
+3. Define the scenario matrix before code: actors/roles, states, locales, permissions, data fixtures, and layers such as API, route, PWA/browser, visual, or native.
+4. Define stable selectors/test ids for UI surfaces. Use product terms, lowercase kebab segments, and locale-independent names; never bind tests to visible copy when copy can change.
+5. Choose the cheapest red test that proves the behavior: unit/contract first, integration/API next, e2e or replay when the user journey matters.
+6. Write or record the failing scenario first. For browser apps, prefer qprobe's logs/API/browser order and record/replay when available: record the important flow, then replay it as regression.
+7. Split work into linked tasks:
+   - contract/use-case task,
+   - failing test or replay task,
+   - implementation task,
+   - regression review task.
+8. Add concrete \`## Verify\` commands to each implementation task. The final gate must include existing regression suite plus the new scenario.
+9. After implementation, run full verification, read failures as product evidence, and update the board. Do not mark done while the new or existing scenario matrix is red.
+
+## Scenario Contract
+
+A good scenario record includes:
+
+- use case ids: \`UC-...\`
+- flow id: \`F..\`
+- scenario slug: lower-kebab-case
+- layer: api, route, pwa/browser, visual, or native
+- actors/roles
+- data state and fixture source
+- locales and permissions
+- whether a real API/server is required
+- file or recording name, for example \`F02-join-light-name.pwa.spec.ts\`
+- verify command and expected result
+
+## TDD Gate
+
+- Red: a failing unit/integration/e2e/replay exists and is linked to the task.
+- Green: implementation passes the focused failing test.
+- Refactor: run broader tests and replay all relevant recorded flows.
+- Done: task evidence shows full verify commands, not just a local claim.
+
+## E2E Harness Rules
+
+- Use real HTTP for journeys that depend on auth, cookies, redirects, file upload, realtime, or cross-service behavior.
+- Isolate runs with fresh test data, random ports, and disposable databases or tenants.
+- Keep app/server singleton state inside a killable subprocess when env binding or module cache can leak across test files.
+- Capture logs and network/browser errors as first-class evidence.
+- Record important browser flows early; replay is cheap regression coverage.
+
+## Board Output
+
+Return the spec ids, scenario matrix, task graph, verify commands, new recordings/tests, and any blockers. Store reusable gotchas with \`agent-board knowledge add "<gotcha>" --kind gotcha --category testing\`.
+`;
+
+export const safeWorkflowSkillAgents = `# Agent Board Safe Workflow Rules
+
+- User-facing behavior needs a use-case/scenario contract before implementation.
+- Prefer red-green-refactor: failing test or replay, implementation, then full regression.
+- Stable selectors/test ids must be locale-independent and product-term based.
+- E2E scenarios should name flow/use-case ids and prove behavior over real boundaries when needed.
+- Existing regressions and new scenarios must pass before done.
 `;
 
 export const grillSkillReadme = `---
@@ -430,7 +503,7 @@ Layout:
 - Flow scripts: \`<board>/flows/*.mjs\`; run artifacts: \`<board>/goals/<goal-slug>/flows/runs/<run-id>/\`.
 - Home boards prefix the above paths with \`projects/<project-slug>/\`.
 - Specs, knowledge, and wireframes: overlay layers at global, project, and goal scope. In a local board, global and project scope collapse (single project).
-- Skills are always global: \`~/.agent-board/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}\`, linked into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`. Local boards never copy skills into the repo.
+- Skills are always global: \`~/.agent-board/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}\`, linked into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`. Local boards never copy skills into the repo.
 
 Why: home keeps board state out of source control and lets many projects/agents share one index; local lets a single project version its board (goals, tasks, specs) alongside the code.
 
@@ -545,7 +618,7 @@ The controller loop is:
 2. Write or update the feature spec.
 3. Break the feature into linked tasks. Subtasks are first-class tasks linked with blockers/dependencies.
 4. For non-trivial orchestration, create a workflow script:
-   - run \`agent-board flow new <name> --template feature|review|fix|design|task-graph|refactor|hygiene|grill\`
+   - run \`agent-board flow new <name> --template feature|review|fix|design|task-graph|refactor|hygiene|grill|safe-workflow\`
    - inspect/edit the generated script with \`agent-board flow cat/write\`
    - encode phases, fan-out, reviews, synthesis, and task/evidence updates in the script
    - summarize the script's phases to the user and ask for confirmation before running, unless the user already explicitly approved execution

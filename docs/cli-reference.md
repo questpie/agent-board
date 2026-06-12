@@ -135,7 +135,7 @@ project-specific `package.json` preview script is required.
 ## Flows
 
 ```sh
-agent-board flow new <name> [--template default|feature|review|fix|design|task-graph|refactor|hygiene|grill] [--force]
+agent-board flow new <name> [--template default|feature|review|fix|design|task-graph|refactor|hygiene|grill|safe-workflow] [--force]
 agent-board flow list
 agent-board flow runtimes
 agent-board flow models --runtime <runtime>
@@ -184,6 +184,7 @@ agent. Templates are simple editable JavaScript scripts:
 - `refactor`: deterministic per-file planning; up to 30 file paths become independent read lanes
 - `hygiene`: maintenance reader + archive planner + consolidator
 - `grill`: adversarial challenge of assumptions, stale facts, risks, and test gaps
+- `safe-workflow`: use-case cartographer + scenario matrix auditor + TDD planner + replay gate reviewer
 
 `flow run` prints:
 
