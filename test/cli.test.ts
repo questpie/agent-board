@@ -25,6 +25,7 @@ describe("cli", () => {
 		expect((await readdir(join(home, "skills"))).sort()).toEqual([
 			"agent-board",
 			"agent-board-bootstrap",
+			"agent-board-design-qa",
 			"agent-board-design-review",
 			"agent-board-design-wireframe",
 			"agent-board-flow",
