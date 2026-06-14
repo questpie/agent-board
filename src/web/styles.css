@@ -1520,6 +1520,14 @@ select.control:focus {
 	background: transparent;
 	color: var(--foreground-muted);
 }
+.share-btn.danger {
+	background: transparent;
+	color: var(--destructive);
+}
+.share-btn.danger:hover {
+	border-color: var(--destructive);
+	background: color-mix(in srgb, var(--destructive) 12%, transparent);
+}
 .share-box.done {
 	display: flex;
 	flex-direction: column;

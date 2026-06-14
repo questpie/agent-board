@@ -4,6 +4,10 @@ Notable changes to `@questpie/agent-board` (CLI binaries: `agent-board`, `agent`
 
 ## Unreleased
 
+## 0.9.0 — 2026-06-14
+
+- **Unshare from the web viewer**: every task/spec/knowledge/design detail now reflects its live share state. `/api/board` reports each artifact's published link, so an already-shared item opens showing its URL with **Copy link**, **Re-share**, and a new **Unshare** action — a loopback-only `DELETE /api/share` that deletes the backing gist and clears the `shares.json` entry. The board now mirrors the CLI's `share rm`: you can see what's shared and revoke it without leaving the viewer.
+
 ## 0.8.0 — 2026-06-14
 
 - **Share a single artifact as a public link**: `agent-board share <design|spec|task|knowledge> <id>` publishes one board artifact as a secret GitHub gist (through your existing `gh` auth, `gist` scope) rendered by a zero-build static viewer (`docs/share`, hosted on the repo's GitHub Pages). A design's HTML bundle is inlined into one self-contained file — local stylesheets, scripts, images, and CSS `url(...)` become inline content and data URLs, while CDN/absolute references are left alone — so a recipient sees the mockup with nothing installed; specs, tasks, and knowledge render as Markdown. Re-sharing updates the same gist, so the link stays stable; shares are tracked in a non-invasive `shares.json` at the project root. `agent-board share list` and `agent-board share rm <kind> <id>` manage them. A secret gist is link-private, not access-controlled; point shares at a different viewer with `AGENT_BOARD_SHARE_VIEWER`. The web viewer (`agent-board web`) also gained a **Share** button on every task, spec, knowledge, and design detail — a single, loopback-only `POST /api/share` endpoint (the board's first mutating route, gated to localhost so binding `--host 0.0.0.0` can't let a LAN peer publish on your behalf).

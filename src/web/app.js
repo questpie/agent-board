@@ -474,23 +474,43 @@ function TasksTab({ board, selId, setSelId, go }) {
 	</div>`;
 }
 
-function ShareButton({ kind, id, current }) {
-	const [state, setState] = useState({ status: "idle" });
+function ShareButton({ kind, id, current, shared }) {
+	const [state, setState] = useState(() =>
+		shared ? { status: "done", viewerUrl: shared.url, gistUrl: shared.gistUrl } : { status: "idle" },
+	);
 	const [copied, setCopied] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const q = `project=${encodeURIComponent(current.project)}&goal=${encodeURIComponent(current.goal)}`;
 	const share = useCallback(async () => {
-		setState({ status: "loading" });
+		setState((s) => ({ ...s, status: "loading" }));
 		try {
-			const res = await fetch(
-				`/api/share?project=${encodeURIComponent(current.project)}&goal=${encodeURIComponent(current.goal)}`,
-				{ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, id }) },
-			);
+			const res = await fetch(`/api/share?${q}`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ kind, id }),
+			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(data?.error || res.statusText);
 			setState({ status: "done", ...data });
 		} catch (e) {
 			setState({ status: "error", message: e.message });
 		}
-	}, [kind, id, current]);
+	}, [kind, id, q]);
+	const unshare = useCallback(async () => {
+		setBusy(true);
+		try {
+			const res = await fetch(`/api/share?${q}&kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`, {
+				method: "DELETE",
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data?.error || res.statusText);
+			setState({ status: "idle" });
+		} catch (e) {
+			setState((s) => ({ ...s, warn: e.message }));
+		} finally {
+			setBusy(false);
+		}
+	}, [kind, id, q]);
 	const copy = useCallback(async () => {
 		try {
 			await navigator.clipboard.writeText(state.viewerUrl);
@@ -507,7 +527,9 @@ function ShareButton({ kind, id, current }) {
 				<button class="share-btn sm" onClick=${copy}>${copied ? "Copied" : "Copy link"}</button>
 				<a class="share-btn sm ghost" href=${state.gistUrl} target="_blank" rel="noreferrer">Gist</a>
 				<button class="share-btn sm ghost" onClick=${share}>Re-share</button>
+				<button class="share-btn sm danger" disabled=${busy} onClick=${unshare}>${busy ? "Removing…" : "Unshare"}</button>
 			</div>
+			${state.warn ? html`<div class="share-warn">${state.warn}</div>` : null}
 			${(state.warnings || []).map((w) => html`<div key=${w} class="share-warn">${w}</div>`)}
 		</div>`;
 	}
@@ -544,7 +566,7 @@ function TaskDetail({ board, task, setSelId, go }) {
 			<h2>${m.title}</h2>
 			<div class="detail-id">${m.id}</div>
 		</div>
-		<div class="detail-actions"><${ShareButton} key=${m.id} kind="task" id=${m.id} current=${board.current} /></div>
+		<div class="detail-actions"><${ShareButton} key=${m.id} kind="task" id=${m.id} current=${board.current} shared=${task.shared} /></div>
 		<div class="field-grid">
 			${fields.map(
 				([k, v, mono]) => html`<div key=${k} class="field">
@@ -656,7 +678,7 @@ function DocsTab({ items, kind, selId, setSelId, current }) {
 							<h2>${selected.meta.title}</h2>
 							<div class="detail-id">${selected.meta.id} · updated ${fmtDate(selected.meta.updated)}</div>
 						</div>
-						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind=${kind === "knowledge" ? "knowledge" : "spec"} id=${selected.meta.id} current=${current} /></div>
+						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind=${kind === "knowledge" ? "knowledge" : "spec"} id=${selected.meta.id} current=${current} shared=${selected.shared} /></div>
 						<${Markdown} source=${selected.body} />
 					</article>`
 				: html`<div class="placeholder">Select a ${kind.replace(/s$/, "")} to read it.</div>`}
@@ -757,7 +779,7 @@ function WireframesTab({ items, selId, setSelId, current }) {
 							</div>
 							<a class="frame-link" href=${selected.url} target="_blank" rel="noreferrer">Open</a>
 						</div>
-						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind="design" id=${selected.meta.id} current=${current} /></div>
+						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind="design" id=${selected.meta.id} current=${current} shared=${selected.shared} /></div>
 						<div class="wireframe-frame">
 							<iframe title=${selected.meta.title} src=${selected.url} loading="lazy" />
 						</div>
