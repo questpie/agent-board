@@ -23,6 +23,7 @@
     agent-board-maintenance/
     agent-board-design-wireframe/
     agent-board-design-review/
+    agent-board-design-qa/
   projects/<project>/
     project.json
     flows/

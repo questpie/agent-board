@@ -504,7 +504,7 @@ Layout:
 - Flow scripts: \`<board>/flows/*.mjs\`; run artifacts: \`<board>/goals/<goal-slug>/flows/runs/<run-id>/\`.
 - Home boards prefix the above paths with \`projects/<project-slug>/\`.
 - Specs, knowledge, and wireframes: overlay layers at global, project, and goal scope. In a local board, global and project scope collapse (single project).
-- Skills are always global: \`~/.agent-board/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}\`, linked into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`. Local boards never copy skills into the repo.
+- Skills are always global: \`~/.agent-board/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review,agent-board-design-qa}\`, linked into \`~/.claude/skills\`, \`~/.agents/skills\`, and \`~/.cursor/skills\` by \`agent-board skills install\`. Local boards never copy skills into the repo.
 
 Why: home keeps board state out of source control and lets many projects/agents share one index; local lets a single project version its board (goals, tasks, specs) alongside the code.
 
