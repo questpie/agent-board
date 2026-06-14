@@ -1481,3 +1481,94 @@ select.control:focus {
 .spacer {
 	flex: 1;
 }
+
+/* ---------- Share ---------- */
+.detail-actions {
+	margin: 14px 0 6px;
+}
+.share-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 14px;
+	border-radius: var(--radius-control);
+	border: 1px solid var(--border);
+	background: var(--surface-mid);
+	color: var(--foreground);
+	font-family: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	text-decoration: none;
+	transition: background-color var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard);
+}
+.share-btn:hover {
+	background: var(--surface-high);
+	border-color: var(--border-strong);
+}
+.share-btn:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+.share-btn.sm {
+	height: 28px;
+	padding: 0 10px;
+	font-size: 12px;
+}
+.share-btn.ghost {
+	background: transparent;
+	color: var(--foreground-muted);
+}
+.share-box.done {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	margin: 14px 0 6px;
+}
+.share-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+.share-tag {
+	flex: none;
+	font-family: var(--font-mono);
+	font-size: 10px;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--success);
+	padding: 3px 9px;
+	border-radius: 999px;
+	border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+	background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.share-url {
+	flex: 1;
+	min-width: 220px;
+	height: 32px;
+	padding: 0 11px;
+	border-radius: var(--radius-inner);
+	border: 1px solid var(--border);
+	background: var(--surface-low);
+	color: var(--foreground);
+	font-family: var(--font-mono);
+	font-size: 12px;
+}
+.share-warn {
+	color: var(--st-in_progress);
+	font-size: 12px;
+	line-height: 1.5;
+}
+.share-box.error {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin: 14px 0 6px;
+}
+.share-err {
+	color: var(--destructive);
+	font-size: 12px;
+}

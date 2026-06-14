@@ -474,6 +474,54 @@ function TasksTab({ board, selId, setSelId, go }) {
 	</div>`;
 }
 
+function ShareButton({ kind, id, current }) {
+	const [state, setState] = useState({ status: "idle" });
+	const [copied, setCopied] = useState(false);
+	const share = useCallback(async () => {
+		setState({ status: "loading" });
+		try {
+			const res = await fetch(
+				`/api/share?project=${encodeURIComponent(current.project)}&goal=${encodeURIComponent(current.goal)}`,
+				{ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind, id }) },
+			);
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(data?.error || res.statusText);
+			setState({ status: "done", ...data });
+		} catch (e) {
+			setState({ status: "error", message: e.message });
+		}
+	}, [kind, id, current]);
+	const copy = useCallback(async () => {
+		try {
+			await navigator.clipboard.writeText(state.viewerUrl);
+			setCopied(true);
+			setTimeout(() => setCopied(false), 1500);
+		} catch {}
+	}, [state.viewerUrl]);
+
+	if (state.status === "done") {
+		return html`<div class="share-box done">
+			<div class="share-row">
+				<span class="share-tag">${state.updated ? "Updated" : "Shared"}</span>
+				<input class="share-url" readonly value=${state.viewerUrl} onClick=${(e) => e.target.select()} />
+				<button class="share-btn sm" onClick=${copy}>${copied ? "Copied" : "Copy link"}</button>
+				<a class="share-btn sm ghost" href=${state.gistUrl} target="_blank" rel="noreferrer">Gist</a>
+				<button class="share-btn sm ghost" onClick=${share}>Re-share</button>
+			</div>
+			${(state.warnings || []).map((w) => html`<div key=${w} class="share-warn">${w}</div>`)}
+		</div>`;
+	}
+	if (state.status === "error") {
+		return html`<div class="share-box error">
+			<button class="share-btn" onClick=${share}>Share</button>
+			<span class="share-err">${state.message}</span>
+		</div>`;
+	}
+	return html`<button class="share-btn" disabled=${state.status === "loading"} onClick=${share}>
+		${state.status === "loading" ? "Sharing…" : "Share"}
+	</button>`;
+}
+
 function TaskDetail({ board, task, setSelId, go }) {
 	const m = task.meta;
 	const ids = new Set(board.tasks.map((t) => t.meta.id));
@@ -496,6 +544,7 @@ function TaskDetail({ board, task, setSelId, go }) {
 			<h2>${m.title}</h2>
 			<div class="detail-id">${m.id}</div>
 		</div>
+		<div class="detail-actions"><${ShareButton} key=${m.id} kind="task" id=${m.id} current=${board.current} /></div>
 		<div class="field-grid">
 			${fields.map(
 				([k, v, mono]) => html`<div key=${k} class="field">
@@ -514,7 +563,7 @@ function TaskDetail({ board, task, setSelId, go }) {
 
 /* ---------- Docs (specs / knowledge) ---------- */
 const UNCATEGORIZED = " uncat";
-function DocsTab({ items, kind, selId, setSelId }) {
+function DocsTab({ items, kind, selId, setSelId, current }) {
 	const [query, setQuery] = useState("");
 	const [cat, setCat] = useState(null);
 	const [sort, setSort] = useState("updated_desc");
@@ -607,6 +656,7 @@ function DocsTab({ items, kind, selId, setSelId }) {
 							<h2>${selected.meta.title}</h2>
 							<div class="detail-id">${selected.meta.id} · updated ${fmtDate(selected.meta.updated)}</div>
 						</div>
+						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind=${kind === "knowledge" ? "knowledge" : "spec"} id=${selected.meta.id} current=${current} /></div>
 						<${Markdown} source=${selected.body} />
 					</article>`
 				: html`<div class="placeholder">Select a ${kind.replace(/s$/, "")} to read it.</div>`}
@@ -615,7 +665,7 @@ function DocsTab({ items, kind, selId, setSelId }) {
 }
 
 /* ---------- Wireframes ---------- */
-function WireframesTab({ items, selId, setSelId }) {
+function WireframesTab({ items, selId, setSelId, current }) {
 	const [query, setQuery] = useState("");
 	const [cat, setCat] = useState(null);
 	const [sort, setSort] = useState("updated_desc");
@@ -707,6 +757,7 @@ function WireframesTab({ items, selId, setSelId }) {
 							</div>
 							<a class="frame-link" href=${selected.url} target="_blank" rel="noreferrer">Open</a>
 						</div>
+						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind="design" id=${selected.meta.id} current=${current} /></div>
 						<div class="wireframe-frame">
 							<iframe title=${selected.meta.title} src=${selected.url} loading="lazy" />
 						</div>
@@ -1035,9 +1086,9 @@ function App() {
 				${tab === "overview" ? html`<${Overview} board=${board} go=${go} />` : null}
 				${tab === "goals" ? html`<${GoalsTab} current=${current} active=${board.current.goal} onOpen=${openGoal} />` : null}
 				${tab === "tasks" ? html`<${TasksTab} board=${board} selId=${selTask} setSelId=${setSelTask} go=${go} />` : null}
-				${tab === "specs" ? html`<${DocsTab} items=${board.specs} kind="specs" selId=${selSpec} setSelId=${setSelSpec} />` : null}
-				${tab === "knowledge" ? html`<${DocsTab} items=${board.knowledge} kind="knowledge" selId=${selKnow} setSelId=${setSelKnow} />` : null}
-				${tab === "wireframes" ? html`<${WireframesTab} items=${board.wireframes} selId=${selWireframe} setSelId=${setSelWireframe} />` : null}
+				${tab === "specs" ? html`<${DocsTab} items=${board.specs} kind="specs" selId=${selSpec} setSelId=${setSelSpec} current=${current} />` : null}
+				${tab === "knowledge" ? html`<${DocsTab} items=${board.knowledge} kind="knowledge" selId=${selKnow} setSelId=${setSelKnow} current=${current} />` : null}
+				${tab === "wireframes" ? html`<${WireframesTab} items=${board.wireframes} selId=${selWireframe} setSelId=${setSelWireframe} current=${current} />` : null}
 				${tab === "flows"
 					? html`<${FlowsTab} board=${board} sel=${current} selRun=${selRun} setSelRun=${setSelRun}
 							selFlow=${selFlow} setSelFlow=${setSelFlow} onLiveTick=${liveTick} />`
