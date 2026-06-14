@@ -4,6 +4,8 @@ Notable changes to `@questpie/agent-board` (CLI binaries: `agent-board`, `agent`
 
 ## Unreleased
 
+- **Design QA — token scan**: `agent-board-design-qa` gained a second embedded primitive that flags off-token values. It learns the repo's design tokens at runtime by probing every `:root` CSS variable through a throwaway element (works on any CSS-variable design system, no per-stack config) and flags off-palette colors, off-token box-shadows, and off-token border-radii. Spacing is intentionally checked only against a real scale, never a generic 4px heuristic.
+
 ## 0.6.0 — 2026-06-14
 
 - **Design QA skill**: `agent-board-design-qa` QAs the implemented, running web UI by measuring it instead of eyeballing a screenshot. A portable DOM geometry scan (overflow, silent truncation, collapse, sibling overlap, near-miss misalignment, small tap targets, sub-16px input fonts) runs through whatever browser/preview capability the harness already exposes (Claude Code `preview_*`, Codex, qprobe, Playwright), layered with design-token conformance, axe-core contrast, an optional reference pixel-diff + overlay, and a vision judge reserved for the residual. `agent-board skills install` links it alongside the existing twelve. Pairs with `agent-board-design-review` (which reviews the mockup).

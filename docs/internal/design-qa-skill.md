@@ -54,15 +54,15 @@ If none is available, wiring one up is the first step; the rest of the loop assu
 1. Target. Read the task and its spec: `agent-board show <task-id>`, then `agent-board spec cat <spec-id>`. Note the required screens, states, and breakpoints. If a visual reference exists (a mockup via `agent-board web`, a Figma export, or a screenshot), keep its image for step 7 — the reference is just an image; where it comes from is your call.
 2. Read this repo's design system. Find the token source (Tailwind/theme config, CSS custom properties, the component library) and extract the spacing scale, the color/radius/shadow tokens, and the real breakpoints. These are the WHAT you measure against.
 3. Render at the repo's real breakpoints (its own `sm`/`md`/`lg`, not invented numbers). Set the viewport, load the page, let it settle.
-4. Measure (deterministic, no vision). Inject the scan below via your eval capability, at each breakpoint. It returns located, measured findings: horizontal overflow, clipped/overflowing content, silently truncated text, collapsed (zero-height) content, sibling overlap, near-miss misalignment, tiny tap targets, sub-16px input fonts.
-5. Token conformance. Snapshot computed styles (color, background-color, border-color, box-shadow, border-radius, gap, padding, margin) across the visible tree and flag any value not in the repo's token set — off-token colors, off-grid spacing, magic-number shadows/radii. This is where an "ugly shadow" usually lives: a one-off blur nobody chose.
+4. Measure (deterministic, no vision). Inject the geometry scan below via your eval capability, at each breakpoint. It returns located, measured findings: horizontal overflow, clipped/overflowing content, silently truncated text, collapsed (zero-height) content, sibling overlap, near-miss misalignment, tiny tap targets, sub-16px input fonts.
+5. Token conformance. Inject the token scan below: it learns the repo's CSS-variable tokens at runtime (probing each var through a throwaway element) and flags off-palette colors, off-token box-shadows, and off-token border-radii. This is where an "ugly shadow" usually lives: a one-off blur nobody chose. (Spacing conformance needs a real scale — see the token scan's note.)
 6. Contrast and a11y heuristics. Inject axe-core from a CDN and run it; surface color-contrast, accessible-name, and target-size violations. Low contrast is a real "looks cheap" signal, not just an a11y nit.
 7. Reference diff — only when a reference image exists. Screenshot the page at the reference's viewport and diff it: a perceptual pixel diff (pixelmatch / odiff / Playwright `toHaveScreenshot`, YIQ + anti-aliasing on, threshold ~0.2) for drift, plus an onion-skin overlay (reference at 50% opacity over the screenshot) for alignment — misalignment shows up as ghosting. This is the 1:1 layer.
 8. Vision LAST, residual only. For what truly resists measurement — an ugly shadow that passed the token check, optical (not mathematical) alignment, overall balance — screenshot a CROP of that region (never the full page; crops keep the detail the downsampler destroys) and judge it against a short, explicit rubric. The verdict is advisory: it may add a finding, never overturn a measured one.
 9. Fix in code, then re-run from step 3 until the measured layers are clean. You are fixing real located defects, not chasing a vibe. Attach the final screenshot as proof.
 10. Record on the board. Blocking defects become tasks: `agent-board new "<fix>" --status ready`. Reusable traps become knowledge: `agent-board knowledge add "<gotcha>" --kind gotcha --category design`. Tie them to the spec with `agent-board link <task-id> --spec <spec-id>`.
 
-## The scan (the one portable primitive)
+## The geometry scan (first portable primitive)
 
 A dumb measurer: it returns numbers, it does not judge. Inject it with your eval capability at each breakpoint; it returns an array of findings. Tune the magic numbers (spacing base, min tap target) to the repo's tokens in step 2, and scope `document.body` to a container on large pages.
 
@@ -132,6 +132,62 @@ A dumb measurer: it returns numbers, it does not judge. Inject it with your eval
 
 Hardening (learned from dogfooding the scanner on a real board UI): read the viewport from document.documentElement.clientWidth and bail if it is 0 (the eval context may not be laid out yet, which otherwise flags every element as overflowing); report only the OUTERMOST overflowing element, not every descendant of it; skip elements inside an svg (ownerSVGElement), whose internal paths/shapes are geometry not layout and produce pure noise; ignore native select content-overflow (it clips option text by design). Detect overlap by pairwise rect intersection of siblings, NOT by comparing a parent's area to the sum of its children's areas — the area method is unsound and gives false positives.
 
+## The token scan (second portable primitive)
+
+The geometry scan asks "is it broken?"; the token scan asks "is it off-system?". It learns the repo's design tokens at runtime: read the CSS custom properties on `:root`, then PROBE each by applying `var(--x)` to a throwaway element's `background-color`, `box-shadow`, and `border-radius` and keeping whatever the browser computes. Probing (not string parsing) is the trick — a token shadow and a rendered shadow never compare equal as strings (`0 18px 40px -28px rgba(...)` vs `rgba(...) 0px 18px 40px -28px`), and it needs zero per-stack config: any design system exposed as CSS variables is picked up. It then flags rendered values absent from the token set: off-palette colors (RGB distance), off-token box-shadows, off-token border-radii. On a repo with no token variables it simply finds nothing.
+
+```js
+(function () {
+  var names = {};
+  for (var si = 0; si < document.styleSheets.length; si++) {
+    var rules; try { rules = document.styleSheets[si].cssRules; } catch (e) { continue; }
+    if (!rules) continue;
+    for (var ri = 0; ri < rules.length; ri++) {
+      var rule = rules[ri];
+      if (!rule.style || typeof rule.selectorText !== "string") continue;
+      var sl = rule.selectorText;
+      if (sl.indexOf(":root") < 0 && sl.indexOf("html") < 0 && sl !== "*") continue;
+      for (var pi = 0; pi < rule.style.length; pi++) { var prop = rule.style[pi]; if (prop.indexOf("--") === 0) names[prop] = true; }
+    }
+  }
+  var probe = document.createElement("div");
+  probe.style.position = "absolute"; probe.style.left = "-9999px"; probe.style.top = "0";
+  document.body.appendChild(probe);
+  var colorSet = {}, shadowSet = {}, radiusSet = {}, nShadow = 0, nRadius = 0;
+  for (var name in names) {
+    var ref = "var(" + name + ")";
+    probe.style.backgroundColor = ""; probe.style.backgroundColor = ref;
+    var bc = getComputedStyle(probe).backgroundColor;
+    if (bc && bc !== "rgba(0, 0, 0, 0)" && bc !== "transparent") { colorSet[bc] = true; continue; }
+    probe.style.boxShadow = ""; probe.style.boxShadow = ref;
+    var bs = getComputedStyle(probe).boxShadow;
+    if (bs && bs !== "none") { if (!shadowSet[bs]) { shadowSet[bs] = true; nShadow++; } continue; }
+    probe.style.borderTopLeftRadius = ""; probe.style.borderTopLeftRadius = ref;
+    var br = parseFloat(getComputedStyle(probe).borderTopLeftRadius);
+    if (!isNaN(br) && br > 0) { if (!radiusSet[Math.round(br)]) { radiusSet[Math.round(br)] = true; nRadius++; } }
+  }
+  function rgb(s) { if (!s) return null; var o = s.indexOf("("); var c = s.indexOf(")"); if (o < 0 || c < 0) return null; var a = s.slice(o + 1, c).split(","); if (a.length < 3) return null; return [parseFloat(a[0]), parseFloat(a[1]), parseFloat(a[2]), a.length > 3 ? parseFloat(a[3]) : 1]; }
+  var palette = []; for (var ck in colorSet) { var pc = rgb(ck); if (pc) palette.push(pc); }
+  function dist(c) { var b = 1e9; for (var i = 0; i < palette.length; i++) { var d = Math.abs(c[0] - palette[i][0]) + Math.abs(c[1] - palette[i][1]) + Math.abs(c[2] - palette[i][2]); if (d < b) b = d; } return b; }
+  var out = [];
+  function sel(el) { if (el.id) return "#" + el.id; var parts = [], n = el, d = 0; while (n && n.nodeType === 1 && d < 4) { var p = n.tagName.toLowerCase(); if (n.classList && n.classList.length) p += "." + Array.prototype.slice.call(n.classList, 0, 2).join("."); parts.unshift(p); n = n.parentElement; d++; } return parts.join(" > "); }
+  function visible(el) { var r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none" && parseFloat(s.opacity) > 0 && !el.ownerSVGElement; }
+  function add(sev, el, prop, measured, expected, msg) { out.push({ layer: "tokens", severity: sev, selector: sel(el), prop: prop, measured: measured, expected: expected, message: msg }); }
+  var all = Array.prototype.slice.call(document.body.querySelectorAll("*")).filter(visible);
+  var COLOR_TOL = 10;
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i], s = getComputedStyle(el);
+    if (nShadow > 0) { var esh = s.boxShadow; if (esh && esh !== "none" && !shadowSet[esh]) add("warn", el, "box-shadow", esh, "a shadow token", "off-token box-shadow (one-off, not a design token)"); }
+    if (nRadius > 0) { var c4 = [s.borderTopLeftRadius, s.borderTopRightRadius, s.borderBottomRightRadius, s.borderBottomLeftRadius]; for (var ci = 0; ci < 4; ci++) { var rv = parseFloat(c4[ci]); if (!isNaN(rv) && rv > 0 && rv < 200 && !radiusSet[Math.round(rv)]) { add("polish", el, "border-radius", Math.round(rv) + "px", "a radius token", "off-token border-radius " + Math.round(rv) + "px"); break; } } }
+    if (palette.length > 0) { var cks = [["color", s.color], ["background-color", s.backgroundColor], ["border-color", s.borderTopColor]]; for (var k = 0; k < 3; k++) { var cv = rgb(cks[k][1]); if (cv && cv[3] > 0.05 && dist(cv) > COLOR_TOL) add("polish", el, cks[k][0], cks[k][1], "a color token", "off-palette " + cks[k][0]); } }
+  }
+  probe.remove();
+  return out.slice(0, 200);
+})()
+```
+
+Spacing is deliberately NOT a generic heuristic here. "Must be a multiple of 4px" is an assumption, not the repo's truth; on a hand-rolled scale it is pure noise (it was the loudest false-positive source in testing). Check spacing only against a real scale — e.g. Tailwind's `--spacing` base, flagging padding/margin/gap that are not multiples of it — and add that per-repo when the scale exists.
+
 ## Finding format
 
 Every layer — scan, tokens, a11y, diff, vision — emits the same shape so findings sort and act uniformly:
@@ -167,6 +223,7 @@ A verdict per breakpoint, then an ordered list of findings (blocking first, poli
 - Reuse the harness's own browser tools (Claude Code `preview_*`, qprobe `browser`, Playwright); do not build new browser infrastructure.
 - HOW is this skill (method, thresholds, layer order); WHAT is the repo (tokens, breakpoints, components) — read the design system every run and measure against it.
 - Layer order: DOM geometry scan -> token conformance -> axe-core contrast/a11y -> reference pixel-diff + overlay (only when a reference image exists) -> vision judge LAST, on crops, advisory only.
+- The token scan learns tokens at runtime by probing `:root` CSS variables (color/shadow/radius) — no per-stack config, and nothing flagged on a repo without token vars. Spacing conformance only against a real scale (e.g. Tailwind `--spacing`), never a generic 4px assumption.
 - A reference is just an image in (Figma export/MCP or a mockup screenshot); no baked-in Figma engine.
 - Fix in code and re-run until the measured layers are clean; the screenshot is proof, not the judge.
 - Record blocking defects as tasks (`agent-board new`) and reusable traps as knowledge (`agent-board knowledge add --kind gotcha --category design`); link findings to the spec.
