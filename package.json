@@ -1,6 +1,6 @@
 {
 	"name": "@questpie/agent-board",
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"description": "Markdown task board and execution contract for coding agents",
 	"license": "MIT",
 	"repository": {
@@ -25,7 +25,8 @@
 		"agent": "./src/index.ts"
 	},
 	"files": [
-		"src"
+		"src",
+		"docs/*.md"
 	],
 	"publishConfig": {
 		"access": "public"
