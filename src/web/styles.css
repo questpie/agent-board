@@ -1368,8 +1368,20 @@ select.control:focus {
 	display: flex;
 	align-items: flex-start;
 	justify-content: space-between;
-	gap: 16px;
+	flex-wrap: wrap;
+	gap: 12px 16px;
 	margin-bottom: 14px;
+}
+.wireframe-actions {
+	display: flex;
+	align-items: flex-start;
+	justify-content: flex-start;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.wireframe-actions .share-box.done,
+.wireframe-actions .share-box.error {
+	margin: 0;
 }
 .frame-link {
 	display: inline-flex;
