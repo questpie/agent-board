@@ -10,6 +10,8 @@ import {
 	bootstrapSkillAgents,
 	bootstrapSkillReadme,
 	configSkillReadme,
+	designQaSkillAgents,
+	designQaSkillReadme,
 	designReviewSkillAgents,
 	designReviewSkillReadme,
 	designWireframeSkillAgents,
@@ -56,6 +58,7 @@ const LOCAL_GITIGNORE = [
 export const BUNDLED_SKILLS = [
 	"agent-board",
 	"agent-board-bootstrap",
+	"agent-board-design-qa",
 	"agent-board-design-review",
 	"agent-board-design-wireframe",
 	"agent-board-flow",
@@ -727,6 +730,11 @@ async function installBundledSkills(root: string): Promise<void> {
 	await ensureDir(designReviewRoot);
 	await writeBundledSkill(join(designReviewRoot, "SKILL.md"), designReviewSkillReadme);
 	await writeBundledSkill(join(designReviewRoot, "AGENTS.md"), designReviewSkillAgents);
+
+	const designQaRoot = join(root, "skills", "agent-board-design-qa");
+	await ensureDir(designQaRoot);
+	await writeBundledSkill(join(designQaRoot, "SKILL.md"), designQaSkillReadme);
+	await writeBundledSkill(join(designQaRoot, "AGENTS.md"), designQaSkillAgents);
 }
 
 async function readProjectConfig(projectPath: string): Promise<ProjectConfig> {

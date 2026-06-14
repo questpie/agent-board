@@ -4,6 +4,8 @@ Notable changes to `@questpie/agent-board` (CLI binaries: `agent-board`, `agent`
 
 ## Unreleased
 
+- **Design QA skill**: `agent-board-design-qa` QAs the implemented, running web UI by measuring it instead of eyeballing a screenshot. A portable DOM geometry scan (overflow, silent truncation, collapse, sibling overlap, near-miss misalignment, small tap targets, sub-16px input fonts) runs through whatever browser/preview capability the harness already exposes (Claude Code `preview_*`, Codex, qprobe, Playwright), layered with design-token conformance, axe-core contrast, an optional reference pixel-diff + overlay, and a vision judge reserved for the residual. `agent-board skills install` links it alongside the existing twelve. Pairs with `agent-board-design-review` (which reviews the mockup).
+
 ## 0.5.0 — 2026-06-11
 
 - **Design skills**: two new bundled skills — `agent-board-design-wireframe` authors an HTML-mockup wireframe (zero-build React-UMD + Babel, a window-globals design kit, a Figma-like canvas of device-sized artboards), and `agent-board-design-review` gives a read-only, spec-linked critique of one. `agent-board skills install` links both into the Claude/agents/Cursor runtimes alongside the existing three, so the same agent that holds the specs can prototype UI as HTML mockups.

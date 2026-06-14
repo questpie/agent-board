@@ -44,9 +44,9 @@ agent-board skills install
 `agent-board skills install` links the bundled skills into supported local runtimes:
 
 ```txt
-~/.claude/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
-~/.agents/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
-~/.cursor/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review}
+~/.claude/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review,agent-board-design-qa}
+~/.agents/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review,agent-board-design-qa}
+~/.cursor/skills/{agent-board,agent-board-bootstrap,agent-board-research,agent-board-spec,agent-board-safe-workflow,agent-board-flow,agent-board-implement,agent-board-worker,agent-board-grill,agent-board-maintenance,agent-board-design-wireframe,agent-board-design-review,agent-board-design-qa}
 ```
 
 Check links, and that the bundled skill docs still match the CLI:
@@ -112,7 +112,7 @@ use cases -> scenario matrix -> failing test/replay -> implementation -> full re
 
 ## Skills
 
-Twelve skills are bundled:
+Thirteen skills are bundled:
 
 - `agent-board`: thin router/orchestrator. Chooses the right workflow, creates goals/specs/tasks, delegates, reviews evidence, and controls flow waves.
 - `agent-board-bootstrap`: guided project or feature bootstrap interview with current-docs research and explicit tradeoffs.
@@ -126,8 +126,9 @@ Twelve skills are bundled:
 - `agent-board-maintenance`: read-only board hygiene. Reports stale claims/runs, broken links, archive candidates, and consolidation candidates before cleanup.
 - `agent-board-design-wireframe`: authors an HTML-mockup wireframe (design board) — zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Import with `agent-board wireframe import`, then preview through `agent-board web`.
 - `agent-board-design-review`: read-only critique of a wireframe against its spec — screenshot and inspect each artboard, then file concrete, spec-linked findings.
+- `agent-board-design-qa`: measures the IMPLEMENTED, running UI instead of eyeballing a screenshot — a portable DOM geometry scan (overflow, truncation, misalignment, tap targets), design-token and contrast checks, an optional reference pixel-diff, and a vision judge only for the residual. Runs through whatever browser/preview tools the harness already exposes.
 
-The split keeps hot skill context small: the router does not carry bootstrap, worker, or hygiene detail; implement workers do not choose the roadmap; and the design pair separates authoring a mockup from reviewing it.
+The split keeps hot skill context small: the router does not carry bootstrap, worker, or hygiene detail; implement workers do not choose the roadmap; and the design trio separates authoring a mockup (wireframe), critiquing it (review), and measuring the built UI (design-qa).
 
 ## Optional Flows
 
