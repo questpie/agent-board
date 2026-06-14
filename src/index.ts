@@ -18,6 +18,7 @@ import { table } from "./utils.js";
 import { startWebServer } from "./web.js";
 import { getWireframe, importWireframe, listWireframes } from "./wireframes.js";
 import { archiveRecord, listArchivedRecords, parseArchiveKind, restoreArchivedRecord } from "./archive.js";
+import { isDefaultViewer, listShares, openUrl, parseShareKind, removeShare, shareArtifact, SHARE_KINDS } from "./share.js";
 
 const program = new Command();
 
@@ -1162,6 +1163,73 @@ skills
 				console.error(`[${issue.source}] ${issue.kind}: ${issue.token}  (in "${issue.invocation}")`);
 			}
 			throw new Error(`Found ${issues.length} doc/CLI drift issue(s). Update src/skills.ts or the repo docs.`);
+		});
+	});
+
+const shareCmd = program
+	.command("share")
+	.description("Share one board artifact as a public link (secret gist + hosted viewer)");
+
+for (const kind of SHARE_KINDS) {
+	shareCmd
+		.command(`${kind} <id>`)
+		.description(`Share a ${kind} as a secret gist rendered by the hosted viewer`)
+		.option("--target <target>", "Publish target: gist (default)", "gist")
+		.option("--open", "Open the share link in a browser")
+		.action(async (id, options) => {
+			await main(async () => {
+				const opts = readOptions<{ target?: string; open?: boolean }>(options);
+				const workspace = currentWorkspace();
+				const result = await shareArtifact(workspace, kind, id, { target: opts.target });
+				console.log(`${result.updated ? "Updated" : "Shared"} ${kind}: ${result.title}`);
+				console.log(`Link: ${result.viewerUrl}`);
+				console.log(`Gist: ${result.gistUrl} (secret)`);
+				for (const warning of result.warnings) console.warn(`Warning: ${warning}`);
+				if (isDefaultViewer()) {
+					console.log(
+						"Note: the Link renders once the board's GitHub Pages viewer (docs/share) is enabled; until then share the Gist URL.",
+					);
+				}
+				if (opts.open) openUrl(result.viewerUrl);
+			});
+		});
+}
+
+shareCmd
+	.command("list")
+	.description("List artifacts shared from this project")
+	.action(async () => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const shares = await listShares(workspace);
+			if (!shares.length) {
+				console.log("No shares.");
+				return;
+			}
+			console.log(
+				table([
+					["Kind", "ID", "Title", "Link"],
+					...shares.map((share) => [share.kind, share.id, share.title, share.url]),
+				]),
+			);
+		});
+	});
+
+shareCmd
+	.command("rm")
+	.argument("<kind>", "design, spec, task, or knowledge")
+	.argument("<id>")
+	.description("Delete a share and its backing gist")
+	.action(async (kindValue, id) => {
+		await main(async () => {
+			const workspace = currentWorkspace();
+			const kind = parseShareKind(kindValue);
+			const result = await removeShare(workspace, kind, id);
+			console.log(
+				result.removed
+					? `Removed share for ${kind} ${id} (gist ${result.gist})`
+					: `No share found for ${kind} ${id}.`,
+			);
 		});
 	});
 

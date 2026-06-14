@@ -132,6 +132,28 @@ Babel + `.jsx` screens) into agent-board storage and records `wireframe.md`
 metadata. `agent-board web` serves the bundle in the Wireframes tab; no
 project-specific `package.json` preview script is required.
 
+## Share
+
+```sh
+agent-board share design <id> [--target gist] [--open]
+agent-board share spec <id> [--open]
+agent-board share task <id> [--open]
+agent-board share knowledge <id> [--open]
+agent-board share list
+agent-board share rm <design|spec|task|knowledge> <id>
+```
+
+Publishes one artifact as a public link. The payload is uploaded as a secret
+GitHub gist through your existing `gh` auth (the `gist` scope is required), and a
+static viewer at `docs/share` renders it. A `design` is flattened to a single
+self-contained HTML file (local stylesheets, scripts, images, and CSS `url(...)`
+become inline content and data URLs; CDN/absolute references are left untouched);
+`spec`, `task`, and `knowledge` are shared as Markdown. The gist id is recorded in
+`shares.json` at the project root, so re-running `share` updates the same gist and
+the link stays stable. Enable GitHub Pages (from `docs/share`) to make the link
+render, or override the viewer with `AGENT_BOARD_SHARE_VIEWER`. A secret gist is
+link-private, not access-controlled.
+
 ## Flows
 
 ```sh

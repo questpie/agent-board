@@ -253,6 +253,26 @@ Every tab is deep-linkable (for example `#tasks/<id>` or `#flows/<run-id>`), so 
 
 The viewer is read-only by design: it reflects board state, it never mutates it.
 
+## Share
+
+`agent-board share` publishes a single artifact — a design, spec, task, or knowledge note — as a public link, so you can send it to someone who has neither the repo nor the CLI. The unit is one artifact (not the whole board), which keeps redaction trivial: you share exactly the file you pick.
+
+```sh
+agent-board share design <id>       # a wireframe, flattened to one self-contained page
+agent-board share spec <id>         # spec / task / knowledge render as Markdown
+agent-board share task <id> --open  # also open the link in a browser
+agent-board share list              # links published from this project
+agent-board share rm design <id>    # delete a share and its backing gist
+```
+
+Each share is stored as a **secret GitHub gist** (created through your existing `gh` auth) and rendered by a small static viewer. A design's HTML bundle is inlined into one file — local stylesheets, scripts, images, and `url(...)` assets become inline content and data URLs, while CDN/absolute references are left alone — so the recipient sees the mockup exactly as the board does, with nothing to install. Re-running `share` on the same artifact updates the same gist, so the URL stays stable.
+
+The web viewer carries the same action: every task, spec, knowledge, and design detail has a **Share** button that posts to a localhost-only endpoint and shows the link inline, so you can publish without leaving the board.
+
+Setup is one-time: authenticate `gh` with the `gist` scope (`gh auth login`), and enable GitHub Pages for the viewer (served from `docs/share`). Until Pages is live the command also prints the raw gist URL as a fallback. Point shares at a different viewer with `AGENT_BOARD_SHARE_VIEWER`.
+
+A secret gist is link-private, not access-controlled: anyone with the URL can open it, and it lives on github.com. That fits "send this to a colleague"; it is not a substitute for real authentication.
+
 ## Concepts
 
 A board lives in one of two places:

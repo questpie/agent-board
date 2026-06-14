@@ -7,6 +7,7 @@ import { listGoals, listProjects, resolveWorkspace, workspaceForGoal } from "./w
 import { listTasks } from "./tasks.js";
 import type { Workspace } from "./types.js";
 import { listWireframes, wireframeAsset, wireframeWebPath } from "./wireframes.js";
+import { parseShareKind, shareArtifact } from "./share.js";
 
 export interface WebServerOptions {
 	port: number;
@@ -17,9 +18,11 @@ export interface WebServerOptions {
 const webDir = join(import.meta.dir, "web");
 
 export async function startWebServer(options: WebServerOptions): Promise<void> {
+	let server!: ReturnType<typeof Bun.serve>;
 	const handler = async (req: Request): Promise<Response> => {
 		const url = new URL(req.url);
 		try {
+			if (req.method === "POST" && url.pathname === "/api/share") return await handleShare(req, url, server);
 			if (url.pathname.startsWith("/api/")) return await handleApi(url);
 			if (url.pathname.startsWith("/wireframes/")) return await handleWireframeAsset(url);
 			return await serveStatic(url.pathname);
@@ -28,7 +31,6 @@ export async function startWebServer(options: WebServerOptions): Promise<void> {
 		}
 	};
 
-	let server: ReturnType<typeof Bun.serve>;
 	try {
 		server = Bun.serve({ port: options.port, hostname: options.host, fetch: handler });
 	} catch (error) {
@@ -396,6 +398,41 @@ function resolveWs(
 	} catch {}
 	const first = projects[0]!;
 	return resolveWorkspace(first.repo_path, { projectSlug: first.slug });
+}
+
+// The board's only mutating endpoint: publish one artifact as a secret gist.
+// Gated to loopback clients so binding `--host 0.0.0.0` can't let a LAN peer
+// create gists on the host's GitHub account.
+async function handleShare(
+	req: Request,
+	url: URL,
+	server: ReturnType<typeof Bun.serve>,
+): Promise<Response> {
+	const peer = server.requestIP(req);
+	if (peer && !isLoopback(peer.address)) {
+		return json({ error: "Sharing is only available from localhost." }, 403);
+	}
+	const projects = await listProjects();
+	if (!projects.length) return json({ error: "No agent-board project found." }, 404);
+	const workspace = resolveWs(
+		projects,
+		url.searchParams.get("project") ?? undefined,
+		url.searchParams.get("goal") ?? undefined,
+	);
+	let payload: { kind?: unknown; id?: unknown };
+	try {
+		payload = (await req.json()) as { kind?: unknown; id?: unknown };
+	} catch {
+		return json({ error: "Invalid JSON body." }, 400);
+	}
+	const id = typeof payload.id === "string" ? payload.id.trim() : "";
+	if (!id) return json({ error: "Missing artifact id." }, 400);
+	const kind = parseShareKind(String(payload.kind ?? ""));
+	return json(await shareArtifact(workspace, kind, id));
+}
+
+function isLoopback(address: string): boolean {
+	return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 const CONTENT_TYPES: Record<string, string> = {

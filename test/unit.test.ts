@@ -13,6 +13,7 @@ import { DEFAULT_FLOW_AGENT_MODE, DEFAULT_FLOW_AGENT_TIMEOUT_MS, modeToPermissio
 import type { Workspace } from "../src/types.js";
 import { Command } from "commander";
 import { findDrift } from "../src/skills-audit.js";
+import { inlineBundle, parseShareKind } from "../src/share.js";
 
 describe("markdown frontmatter", () => {
 	test("parses and stringifies simple task metadata", () => {
@@ -521,3 +522,51 @@ function restoreEnv(saved: Record<string, string | undefined>): void {
 		else process.env[key] = value;
 	}
 }
+
+describe("share", () => {
+	test("parseShareKind accepts kinds and rejects others", () => {
+		expect(parseShareKind("design")).toBe("design");
+		expect(parseShareKind("knowledge")).toBe("knowledge");
+		expect(() => parseShareKind("flow")).toThrow(/Invalid kind/);
+	});
+
+	test("inlineBundle inlines local assets, leaves external refs, guards traversal", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agent-board-share-"));
+		const bundle = join(root, "bundle");
+		await mkdir(bundle);
+		await writeFile(join(root, "secret.txt"), "TOPSECRET");
+		await writeFile(join(bundle, "kit.css"), ".hero{background:url(bg.svg)}");
+		await writeFile(join(bundle, "bg.svg"), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+		await writeFile(join(bundle, "app.jsx"), "const answer = 42;");
+		await writeFile(join(bundle, "pic.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+		await writeFile(
+			join(bundle, "index.html"),
+			[
+				'<link rel="stylesheet" href="kit.css">',
+				'<script src="app.jsx" type="text/babel"></script>',
+				'<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>',
+				'<img src="pic.png">',
+				'<img src="../secret.txt">',
+			].join("\n"),
+		);
+
+		const { html, bytes } = await inlineBundle(bundle, "index.html");
+
+		// Local stylesheet → inline <style>, and its url(bg.svg) → data URL
+		expect(html).toContain("<style>");
+		expect(html).not.toContain('href="kit.css"');
+		expect(html).toContain("data:image/svg+xml;base64,");
+		// Local script → inline content, original type attribute preserved
+		expect(html).toContain("const answer = 42;");
+		expect(html).toContain('type="text/babel"');
+		expect(html).not.toContain('src="app.jsx"');
+		// External script untouched
+		expect(html).toContain("https://unpkg.com/react@18/umd/react.production.min.js");
+		// Local image → data URL
+		expect(html).toContain("data:image/png;base64,");
+		// Path traversal is refused: ref stays, secret is never embedded
+		expect(html).toContain('src="../secret.txt"');
+		expect(html).not.toContain("TOPSECRET");
+		expect(bytes).toBe(Buffer.byteLength(html, "utf8"));
+	});
+});
