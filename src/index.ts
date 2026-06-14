@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command } from "commander";
 import { createKnowledge, createSpec, getKnowledge, getSpec, listKnowledge, listSpecs, parseScope, setKnowledgeCategory, setSpecCategory, writeKnowledgeBody, writeSpecBody } from "./documents.js";
@@ -23,7 +24,7 @@ const program = new Command();
 program
 	.name("agent-board")
 	.description("Markdown task board and execution contract for coding agents")
-	.version("0.4.0")
+	.version(JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version)
 	.allowUnknownOption(true);
 
 program
