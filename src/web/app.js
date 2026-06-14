@@ -777,9 +777,11 @@ function WireframesTab({ items, selId, setSelId, current }) {
 								<h2>${selected.meta.title}</h2>
 								<div class="detail-id">${selected.meta.id} · ${selected.meta.entry} · updated ${fmtDate(selected.meta.updated)}</div>
 							</div>
-							<a class="frame-link" href=${selected.url} target="_blank" rel="noreferrer">Open</a>
+							<div class="wireframe-actions">
+								<a class="frame-link" href=${selected.url} target="_blank" rel="noreferrer">Open</a>
+								<${ShareButton} key=${selected.meta.id} kind="design" id=${selected.meta.id} current=${current} shared=${selected.shared} />
+							</div>
 						</div>
-						<div class="detail-actions"><${ShareButton} key=${selected.meta.id} kind="design" id=${selected.meta.id} current=${current} shared=${selected.shared} /></div>
 						<div class="wireframe-frame">
 							<iframe title=${selected.meta.title} src=${selected.url} loading="lazy" />
 						</div>
