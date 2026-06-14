@@ -49,6 +49,8 @@ This skill needs three capabilities from whatever harness you are on — Claude 
 
 If none is available, wiring one up is the first step; the rest of the loop assumes these three.
 
+If `@questpie/probe` (qprobe) is installed, skip manual injection: `qprobe design <url> --viewport 375,768,1280` launches headless Chromium and runs the geometry and token scans below as a tested command, printing the same JSON findings. Prefer it when available; the embedded scans are the portable fallback for harnesses without qprobe.
+
 ## Loop
 
 1. Target. Read the task and its spec: `agent-board show <task-id>`, then `agent-board spec cat <spec-id>`. Note the required screens, states, and breakpoints. If a visual reference exists (a mockup via `agent-board web`, a Figma export, or a screenshot), keep its image for step 7 — the reference is just an image; where it comes from is your call.
