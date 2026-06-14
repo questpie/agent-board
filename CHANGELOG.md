@@ -4,7 +4,10 @@ Notable changes to `@questpie/agent-board` (CLI binaries: `agent-board`, `agent`
 
 ## Unreleased
 
+## 0.7.0 — 2026-06-14
+
 - **Design QA — token scan**: `agent-board-design-qa` gained a second embedded primitive that flags off-token values. It learns the repo's design tokens at runtime by probing every `:root` CSS variable through a throwaway element (works on any CSS-variable design system, no per-stack config) and flags off-palette colors, off-token box-shadows, and off-token border-radii. Spacing is intentionally checked only against a real scale, never a generic 4px heuristic.
+- **Design QA — prefer `qprobe design`**: when `@questpie/probe` is installed, the skill now prefers its `qprobe design <url>` command (the same scanners run as tested code) and falls back to the embedded scans otherwise.
 
 ## 0.6.0 — 2026-06-14
 
