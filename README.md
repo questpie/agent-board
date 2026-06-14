@@ -267,7 +267,7 @@ agent-board share rm design <id>    # delete a share and its backing gist
 
 Each share is stored as a **secret GitHub gist** (created through your existing `gh` auth) and rendered by a small static viewer. A design's HTML bundle is inlined into one file — local stylesheets, scripts, images, and `url(...)` assets become inline content and data URLs, while CDN/absolute references are left alone — so the recipient sees the mockup exactly as the board does, with nothing to install. Re-running `share` on the same artifact updates the same gist, so the URL stays stable.
 
-The web viewer carries the same action: every task, spec, knowledge, and design detail has a **Share** button that posts to a localhost-only endpoint and shows the link inline, so you can publish without leaving the board.
+The web viewer carries the same actions: every task, spec, knowledge, and design detail shows its live share state — already-shared items open with their link, **Copy**, **Re-share**, and **Unshare** (revoke). It all runs through a localhost-only endpoint, so you can publish and revoke without leaving the board.
 
 Setup is one-time: authenticate `gh` with the `gist` scope (`gh auth login`), and enable GitHub Pages for the viewer (served from `docs/share`). Until Pages is live the command also prints the raw gist URL as a fallback. Point shares at a different viewer with `AGENT_BOARD_SHARE_VIEWER`.
 

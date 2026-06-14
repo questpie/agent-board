@@ -264,7 +264,7 @@ function indexPath(workspace: Workspace): string {
 	return join(workspace.projectPath, "shares.json");
 }
 
-async function readShareIndex(workspace: Workspace): Promise<Record<string, ShareRecord>> {
+export async function readShareIndex(workspace: Workspace): Promise<Record<string, ShareRecord>> {
 	try {
 		const parsed = JSON.parse(await readFile(indexPath(workspace), "utf8"));
 		return parsed && typeof parsed === "object" ? (parsed as Record<string, ShareRecord>) : {};
@@ -277,7 +277,7 @@ async function writeShareIndex(workspace: Workspace, index: Record<string, Share
 	await atomicWrite(indexPath(workspace), `${JSON.stringify(index, null, 2)}\n`);
 }
 
-function shareKey(kind: ShareKind, scope: string, id: string): string {
+export function shareKey(kind: ShareKind, scope: string, id: string): string {
 	return `${kind}:${scope}:${id}`;
 }
 

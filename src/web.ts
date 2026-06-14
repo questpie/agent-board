@@ -7,7 +7,7 @@ import { listGoals, listProjects, resolveWorkspace, workspaceForGoal } from "./w
 import { listTasks } from "./tasks.js";
 import type { Workspace } from "./types.js";
 import { listWireframes, wireframeAsset, wireframeWebPath } from "./wireframes.js";
-import { parseShareKind, shareArtifact } from "./share.js";
+import { parseShareKind, readShareIndex, removeShare, shareArtifact, shareKey } from "./share.js";
 
 export interface WebServerOptions {
 	port: number;
@@ -23,6 +23,7 @@ export async function startWebServer(options: WebServerOptions): Promise<void> {
 		const url = new URL(req.url);
 		try {
 			if (req.method === "POST" && url.pathname === "/api/share") return await handleShare(req, url, server);
+			if (req.method === "DELETE" && url.pathname === "/api/share") return await handleUnshare(req, url, server);
 			if (url.pathname.startsWith("/api/")) return await handleApi(url);
 			if (url.pathname.startsWith("/wireframes/")) return await handleWireframeAsset(url);
 			return await serveStatic(url.pathname);
@@ -93,6 +94,11 @@ async function board(
 		listFlowRuns(workspace),
 	]);
 	const wireframes = await listWireframes(workspace);
+	const shares = await readShareIndex(workspace);
+	const sharedFor = (kind: "design" | "spec" | "task" | "knowledge", scope: string, id: string) => {
+		const record = shares[shareKey(kind, scope, id)];
+		return record ? { url: record.url, gistUrl: record.gistUrl, sharedAt: record.sharedAt } : null;
+	};
 	const goalSummaries = await Promise.all(
 		goals.map(async (g) => ({ id: g.id, title: g.title, active: g.active, updated: await goalUpdatedMs(g.path) })),
 	);
@@ -100,10 +106,10 @@ async function board(
 		projects: projects.map((p) => ({ slug: p.slug, repo_path: p.repo_path })),
 		current: { project: workspace.projectSlug, goal: workspace.goalSlug, repo: workspace.repoPath },
 		goals: goalSummaries,
-		tasks: tasks.map((t) => ({ meta: t.meta, body: t.body })),
-		specs: specs.map((s) => ({ scope: s.scope, meta: s.meta, body: s.body })),
-		knowledge: knowledge.map((k) => ({ scope: k.scope, meta: k.meta, body: k.body })),
-		wireframes: wireframes.map((w) => ({ scope: w.scope, meta: w.meta, body: w.body, url: wireframeWebPath(workspace, w) })),
+		tasks: tasks.map((t) => ({ meta: t.meta, body: t.body, shared: sharedFor("task", workspace.goalSlug, t.meta.id) })),
+		specs: specs.map((s) => ({ scope: s.scope, meta: s.meta, body: s.body, shared: sharedFor("spec", s.scope, s.meta.id) })),
+		knowledge: knowledge.map((k) => ({ scope: k.scope, meta: k.meta, body: k.body, shared: sharedFor("knowledge", k.scope, k.meta.id) })),
+		wireframes: wireframes.map((w) => ({ scope: w.scope, meta: w.meta, body: w.body, url: wireframeWebPath(workspace, w), shared: sharedFor("design", w.scope, w.meta.id) })),
 		flows: flows.map((f) => ({ name: f.name })),
 		runs,
 	};
@@ -429,6 +435,30 @@ async function handleShare(
 	if (!id) return json({ error: "Missing artifact id." }, 400);
 	const kind = parseShareKind(String(payload.kind ?? ""));
 	return json(await shareArtifact(workspace, kind, id));
+}
+
+// Revoke a share: delete the backing gist and drop it from the index. Also
+// loopback-only — same reasoning as handleShare.
+async function handleUnshare(
+	req: Request,
+	url: URL,
+	server: ReturnType<typeof Bun.serve>,
+): Promise<Response> {
+	const peer = server.requestIP(req);
+	if (peer && !isLoopback(peer.address)) {
+		return json({ error: "Sharing is only available from localhost." }, 403);
+	}
+	const projects = await listProjects();
+	if (!projects.length) return json({ error: "No agent-board project found." }, 404);
+	const workspace = resolveWs(
+		projects,
+		url.searchParams.get("project") ?? undefined,
+		url.searchParams.get("goal") ?? undefined,
+	);
+	const id = (url.searchParams.get("id") ?? "").trim();
+	if (!id) return json({ error: "Missing artifact id." }, 400);
+	const kind = parseShareKind(String(url.searchParams.get("kind") ?? ""));
+	return json(await removeShare(workspace, kind, id));
 }
 
 function isLoopback(address: string): boolean {
