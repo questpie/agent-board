@@ -1,0 +1,79 @@
+<!-- @dsCard group="Foundations" name="Foundations" subtitle="color · spacing · radius · type · elevation — the single token source" -->
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Foundations</title>
+<!-- Foundations are a card too: they VISUALISE tokens.css so a re-theme is a
+     review, not a guess. Everything references these — no raw hex/px elsewhere. -->
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../kit.css" />
+<link rel="stylesheet" href="./ds-card.css" />
+</head>
+<body>
+  <header class="ds-head">
+    <p class="eyebrow">Foundations</p>
+    <h1>Foundations</h1>
+    <p class="lead">The token source. Everything references these — no raw hex or px lives outside <code>tokens.css</code>. Re-theme the whole board by editing that one file; dark via <code>[data-theme="dark"]</code>.</p>
+  </header>
+
+  <div class="ds-section">
+    <span class="muted">Semantic color</span>
+    <div class="ds-grid">
+      <div class="ds-swatch" style="background:var(--color-surface)">surface</div>
+      <div class="ds-swatch" style="background:var(--color-surface-muted)">surface-muted</div>
+      <div class="ds-swatch" style="background:var(--color-canvas)">canvas</div>
+      <div class="ds-swatch" style="background:var(--color-primary);color:var(--color-on-accent)">primary</div>
+      <div class="ds-swatch" style="background:var(--color-accent);color:var(--color-on-accent)">accent</div>
+      <div class="ds-swatch" style="background:var(--color-text);color:var(--color-bg)">text</div>
+      <div class="ds-swatch" style="background:var(--color-muted);color:var(--color-bg)">muted</div>
+      <div class="ds-swatch" style="background:var(--color-border)">border</div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted">Spacing scale (<code>--space-*</code>)</span>
+    <div class="stack" style="gap:var(--space-2)">
+      <div class="row"><span class="ds-key">space-1</span><div class="ds-bar" style="width:var(--space-1)"></div></div>
+      <div class="row"><span class="ds-key">space-2</span><div class="ds-bar" style="width:var(--space-2)"></div></div>
+      <div class="row"><span class="ds-key">space-3</span><div class="ds-bar" style="width:var(--space-3)"></div></div>
+      <div class="row"><span class="ds-key">space-4</span><div class="ds-bar" style="width:var(--space-4)"></div></div>
+      <div class="row"><span class="ds-key">space-5</span><div class="ds-bar" style="width:var(--space-5)"></div></div>
+      <div class="row"><span class="ds-key">space-6</span><div class="ds-bar" style="width:var(--space-6)"></div></div>
+      <div class="row"><span class="ds-key">space-8</span><div class="ds-bar" style="width:var(--space-8)"></div></div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted">Radius</span>
+    <div class="ds-row">
+      <div class="ds-box" style="height:48px;border-radius:var(--radius-sm)"></div>
+      <div class="ds-box" style="height:48px;border-radius:var(--radius-md)"></div>
+      <div class="ds-box" style="height:48px;border-radius:var(--radius-lg)"></div>
+      <div class="ds-box" style="height:48px;border-radius:var(--radius-pill)"></div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted">Type scale (<code>--text-*</code>)</span>
+    <div class="stack" style="gap:var(--space-2)">
+      <div style="font-size:var(--text-3xl);font-weight:var(--weight-bold)">Display 3xl</div>
+      <div style="font-size:var(--text-2xl);font-weight:var(--weight-bold)">Heading 2xl</div>
+      <div style="font-size:var(--text-xl)">Title xl</div>
+      <div style="font-size:var(--text-lg)">Subtitle lg</div>
+      <div style="font-size:var(--text-md)">Body md</div>
+      <div class="muted" style="font-size:var(--text-sm)">Small sm</div>
+      <div class="muted" style="font-size:var(--text-xs)">Caption xs</div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted">Elevation</span>
+    <div class="ds-row">
+      <div class="ds-box" style="box-shadow:var(--shadow-card)"></div>
+      <div class="ds-box" style="box-shadow:var(--shadow-pop)"></div>
+    </div>
+  </div>
+</body>
+</html>

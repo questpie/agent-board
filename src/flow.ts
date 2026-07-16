@@ -78,6 +78,13 @@ export function resolveCodexAcpBin(): CodexAcpBinResolution | undefined {
 }
 
 function resolveBundledCodexAcpBin(): string | undefined {
+	try {
+		const path = require.resolve("@agentclientprotocol/codex-acp/dist/index.js");
+		if (existsSync(path)) return path;
+	} catch {
+		// Fall through to the legacy native package while spawn-agent still
+		// carries it transitively. Agent-board ships the maintained adapter.
+	}
 	const pkg = codexAcpPlatformPackage();
 	if (!pkg) return undefined;
 	const binaryName = process.platform === "win32" ? "codex-acp.exe" : "codex-acp";
@@ -97,6 +104,18 @@ function codexAcpPlatformPackage(): string | undefined {
 	if (process.platform === "win32" && process.arch === "arm64") return "@zed-industries/codex-acp-win32-arm64";
 	if (process.platform === "win32" && process.arch === "x64") return "@zed-industries/codex-acp-win32-x64";
 	return undefined;
+}
+
+export function resolveCodexAcpAdapter<T>(
+	factory: (options: { binPath: string; env?: Readonly<Record<string, string>> }) => T,
+	env?: Readonly<Record<string, string>>,
+): { adapter: T; resolution: CodexAcpBinResolution } | undefined {
+	const resolution = resolveCodexAcpBin();
+	if (!resolution) return undefined;
+	return {
+		adapter: factory({ binPath: resolution.path, env }),
+		resolution,
+	};
 }
 
 export interface FlowRunOptions {
@@ -464,8 +483,11 @@ export async function discoverFlowModels(
 	}
 	const codexEnv = await prepareCodexFlowEnvironment(workspace, { runtime, codexMcpMode: "isolated" });
 	try {
-		const { SpawnAgent } = await import("spawn-agent");
-		const agent = await SpawnAgent.connect(runtime, {
+		const { SpawnAgent, adapters } = await import("spawn-agent");
+		const codexAcp = runtime === "codex"
+			? resolveCodexAcpAdapter(adapters.codex, codexEnv.env)
+			: undefined;
+		const agent = await SpawnAgent.connect(codexAcp?.adapter ?? runtime, {
 			cwd: workspace.repoPath,
 			env: codexEnv.env,
 			mcpServers: [],
@@ -1302,16 +1324,18 @@ async function runAgentPrompt(
 			if (options.verbose) console.error(`[${options.name ?? runtime}] ${line}`);
 		},
 	};
-	const codexAcpBin = runtime === "codex" ? resolveCodexAcpBin() : undefined;
-	if (codexAcpBin) {
+	const codexAcp = runtime === "codex"
+		? resolveCodexAcpAdapter(adapters.codex, options.env)
+		: undefined;
+	if (codexAcp) {
 		options.diagnostics.push({
 			level: "info",
-			message: `codex acp bin (${codexAcpBin.source}): ${codexAcpBin.path}`,
+			message: `codex acp bin (${codexAcp.resolution.source}): ${codexAcp.resolution.path}`,
 		});
 	}
 	const result = streamText({
-		model: codexAcpBin
-			? spawnAgent.fromAdapter(adapters.codex({ binPath: codexAcpBin.path, env: options.env }), agentSettings)
+		model: codexAcp
+			? spawnAgent.fromAdapter(codexAcp.adapter, agentSettings)
 			: spawnAgent(runtime, agentSettings),
 		system: options.system ?? defaultSystemPrompt(),
 		prompt,
@@ -1331,15 +1355,17 @@ async function* directAgentStream(
 	},
 ): AsyncGenerator<FlowStreamPart> {
 	const { SpawnAgent, adapters } = await import("spawn-agent");
-	const codexAcpBin = runtime === "codex" ? resolveCodexAcpBin() : undefined;
-	if (codexAcpBin) {
+	const codexAcp = runtime === "codex"
+		? resolveCodexAcpAdapter(adapters.codex, options.env)
+		: undefined;
+	if (codexAcp) {
 		options.diagnostics.push({
 			level: "info",
-			message: `codex acp bin (${codexAcpBin.source}): ${codexAcpBin.path}`,
+			message: `codex acp bin (${codexAcp.resolution.source}): ${codexAcp.resolution.path}`,
 		});
 	}
 	const agent = await SpawnAgent.connect(
-		codexAcpBin ? adapters.codex({ binPath: codexAcpBin.path, env: options.env }) : runtime,
+		codexAcp?.adapter ?? runtime,
 		{
 			cwd: options.cwd,
 			env: options.env,

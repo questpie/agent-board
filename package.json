@@ -1,6 +1,6 @@
 {
 	"name": "@questpie/agent-board",
-	"version": "0.9.0",
+	"version": "0.10.0",
 	"description": "Markdown task board and execution contract for coding agents",
 	"license": "MIT",
 	"repository": {
@@ -39,6 +39,7 @@
 		"test": "bun test"
 	},
 	"dependencies": {
+		"@agentclientprotocol/codex-acp": "^1.1.4",
 		"ai": "^6.0.193",
 		"commander": "^14.0.2",
 		"spawn-agent": "^0.0.1"

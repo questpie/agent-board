@@ -1,0 +1,29 @@
+/* Shared chrome for component cards — the gallery frame, NOT the component
+   itself. Token-driven like everything else. Each card links tokens.css +
+   kit.css + this, then shows its variants built only from kit classes. */
+body { margin: 0; padding: var(--space-8); background: var(--color-canvas);
+  color: var(--color-text); font: var(--text-md)/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+
+.ds-head { margin-bottom: var(--space-6); }
+.ds-head h1 { font-size: var(--text-2xl); font-weight: var(--weight-bold); letter-spacing: -.01em; margin: var(--space-1) 0; }
+.ds-head .lead { max-width: 60ch; }
+
+.ds-section { margin-top: var(--space-6); }
+.ds-section > .muted { display: block; margin-bottom: var(--space-3); }
+
+.ds-row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center; }
+.ds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--space-3); }
+
+.ds-swatch { height: 64px; border-radius: var(--radius-md); border: 1px solid var(--color-border);
+  display: flex; align-items: flex-end; padding: var(--space-2);
+  font: var(--text-xs)/1 ui-monospace, Menlo, monospace; }
+.ds-key { width: 72px; flex-shrink: 0; color: var(--color-muted);
+  font: var(--text-xs)/1 ui-monospace, Menlo, monospace; }
+.ds-bar { height: 16px; background: var(--color-primary); border-radius: var(--radius-sm); }
+.ds-box { width: 120px; height: 64px; background: var(--color-surface);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.demo { background: var(--color-surface-muted); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); padding: var(--space-3); text-align: center; color: var(--color-muted); }
+
+code { font: var(--text-sm) ui-monospace, Menlo, monospace; background: var(--color-surface-muted);
+  padding: 0 4px; border-radius: var(--radius-sm); }

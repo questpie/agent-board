@@ -1,0 +1,45 @@
+<!-- @dsCard group="Components" name="Card" subtitle="surface + border + cover media + text; --card-bg token" -->
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Card</title>
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../kit.css" />
+<link rel="stylesheet" href="./ds-card.css" />
+</head>
+<body>
+  <header class="ds-head">
+    <p class="eyebrow">Components</p>
+    <h1>Card</h1>
+    <p class="lead">Cover media + title + meta on a surface. Re-skin per instance with <code>--card-bg</code>.</p>
+  </header>
+
+  <div class="ds-section">
+    <span class="muted">Anatomy</span>
+    <div class="stack" style="max-width:320px">
+      <div class="card">
+        <div class="ph ph--cover" data-label="cover"></div>
+        <div class="grow">
+          <div class="card__title">Ranná rutina</div>
+          <div class="muted">5 min · čítanie</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted">Per-instance surface (<code>--card-bg</code>)</span>
+    <div class="stack" style="max-width:320px">
+      <div class="card" style="--card-bg:var(--color-surface-muted)">
+        <div class="ph ph--cover" data-label="cover"></div>
+        <div class="grow">
+          <div class="card__title">Plán na týždeň</div>
+          <div class="muted">Aktualizované dnes</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

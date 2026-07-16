@@ -751,85 +751,83 @@ Reuse a small vocabulary across specs and knowledge so the board and the web vie
 
 export const designWireframeSkillReadme = `---
 name: agent-board-design-wireframe
-description: "Author or extend an HTML-mockup wireframe (design board) the way Claude Design does: zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Use when prototyping screens, building UI/UX mockups or wireframes, or designing a flow board before implementation — whenever asked to mock up, prototype, or visually design screens. Pairs with agent-board-design-review. Triggers: wireframe, mockup, prototype, design board, flow board, screen mockup, HTML mockup, UI/UX, visual prototype."
+description: "Author or extend an editable design board (wireframe) that lives in the agent-board store: a real foundations → kit → screens design system in static, granular HTML you can edit live in the browser — retype text, swap images (board media / upload / URL) — with changes round-tripping to the source file. Use when prototyping screens, building UI/UX mockups, a design system, or a flow board before implementation. Pairs with agent-board-design-review. Triggers: wireframe, mockup, prototype, design board, flow board, screen mockup, HTML mockup, UI/UX, design system, design tokens, component library, theme, editable mockup."
 ---
 
 # Agent Board · Design Wireframe
 
-Use this skill to AUTHOR a design as a portable HTML-mockup board. The output is a faithful, inspectable prototype a human reviews and a coder implements from — not production code. Authoring HTML mockups with the same agent that holds the specs is the highest-leverage design loop: live, themeable, inspectable, no Figma round-trip.
+Author an editable design board: device-sized screens a human reviews and a coder implements from. It lives in agent-board and is editable live in the browser — a reviewer retypes a heading or swaps a photo and the change round-trips to the source file. Build it like a real design system, not one-off mockups: **foundations → kit → screens**. That discipline IS the product — it's what makes the board themeable, consistent, and editable — and it's non-negotiable below.
 
-## The medium: zero-build, in-browser
+## Where the board lives: in agent-board (source of truth)
 
-- One HTML entry loads React + ReactDOM UMD and \`@babel/standalone\` from a CDN. Every design file is \`<script type="text/babel" src="*.jsx">\`; Babel transpiles JSX in the browser. No bundler, no node_modules.
-- No imports/exports — files publish to \`window.*\` and read each other from there. So load order IS the dependency graph: kit first, then screens, then the canvas, then an inline App that renders.
-- Consequence: it must be served over HTTP, never opened from \`file://\` (Babel fetches each .jsx).
+- Create it on the board: \`agent-board wireframe scaffold --title "<title>"\` (alias \`agent-board design new\`) writes the template straight into the store at \`wireframes/<id>/\`. To bring in an existing bundle: \`agent-board wireframe import <directory> --category design\`.
+- That store dir IS the source of truth — git-versioned, and where live edits persist. Never keep the canonical board in a loose working/temp dir; if you scaffolded outside, import it so the board owns it.
+- Tie it to the work: \`agent-board link <task-id> --spec <spec-id>\`, and mention the wireframe id in the spec/task body.
 
-## Structure to follow
+## Out-of-the-box shells — never touch these
 
-1. A design kit (one file): tokens as plain JS objects (colors, fonts, spacing), an inline-SVG \`Icon\`, honest placeholders (gradient \`Photo\` tiles, initials \`Avatar\` — never fabricated imagery), device chrome (status bar, a \`Screen\` frame, tab bars), and atoms (\`Btn\`, \`Chip\`, \`Toggle\`). Publish each to \`window\`.
-2. Screen modules: each defines screen components (\`ScrXxx\`) and any explainer boards (\`BoardXxx\`) on \`window\`.
-3. A canvas: a Figma-like wrapper that lays titled sections of artboards out with pan/zoom. Build a minimal one, or harvest the full pan/zoom/focus/export canvas from a Claude Design export and reuse it.
-4. An inline App: a factory like \`A(id, label, child, w, h)\` builds artboards; group them into titled sections; render with \`ReactDOM.createRoot\`.
+The scaffold ships generic, content-agnostic shells you build *through*, not *on*:
+- \`board-stage.js\` — canvas chrome + Edit toggle; parses the board root \`[data-board]\`.
+- \`editor.js\` — click-to-edit text + the image picker (board media / upload / URL).
+- \`preview.js\` — standalone host for \`bun preview.js\`.
+
+They know nothing about your content. You never edit them — you only write the static screens and the foundations/kit. **The HTML is the data; the shells are the runtime.**
+
+## The law: foundations → kit → screens
+
+Mandatory, not stylistic. A screen is an **instance** of kit components — never ad-hoc markup.
+
+1. **Tokens first — \`tokens.css\`.** Tiered brand → semantic → scales (color, spacing \`--space-*\`, radius, type, elevation). Set the project's real brand tier *before* building screens. **RULE: no raw hex or px exists anywhere except \`tokens.css\`.** Re-theme the whole board by editing this one file; dark via \`[data-theme="dark"]\`.
+2. **Reuse-or-die — \`kit.css\` + \`components/\`.** Every UI element is a token-driven kit class defined ONCE, and documented as a standalone \`@dsCard\` card in \`components/<Name>.html\` (link tokens+kit, render every variant/state from kit classes only). Screens compose those classes. If a pattern appears twice, it's a component: add the class + its card first, then instance it. Never copy-paste inline styling for a repeated thing.
+3. **Per-component tokens.** Each component exposes its own \`--c-*\` vars defaulting to semantic tokens, so you re-theme three ways: globally (\`tokens.css\`), per type (the component's \`--c-*\` default in \`kit.css\`), per instance (inline \`style="--btn-bg: …"\`). Always \`var(--…)\`, never a literal.
+4. **Layout = auto-layout, never freeform.** Compose with the auto-layout primitives — \`.stack\` / \`.row\` / \`.between\` / \`.grow\` (flex + token gaps; Figma auto-layout ≈ flex). Spacing is always a \`--space-*\` token. **NEVER lay out with absolute / \`top\`/\`left\` magic pixels** — it breaks responsiveness and live editing. (Absolute is only for true overlays, e.g. a badge pinned on an image.)
+
+## The medium: static, granular, directly editable
+
+Plain static HTML — no build, no framework for content. A static node is its own source, so a human click-edits it in the browser and it round-trips to the file, and you (the AI) edit the same markup.
+
+- One screen = one artboard: \`<section data-screen="<slug>" data-device="phone|desktop">\` inside \`[data-board]\`.
+- Every editable leaf is its own node: text → \`<h1 class="title" data-edit="text" data-key="title">…</h1>\`; image → \`<div class="ph" data-edit="image" data-key="hero" data-label="hero image">\`. Spell repeats out — three cards = three \`<div class="card">\`, never one looped from an array.
+- \`data-key\` is a stable, human id unique within its screen (\`title\`, \`cta\`, \`hero\`); it's how an edit addresses the node and it survives reorder.
+- Reach for React/JS only when a screen genuinely needs interactive behaviour static HTML can't express (phase-B); even then keep editable copy as static leaves.
 
 ## Conventions that make it good
 
-- Honest placeholders only — never fake photos, logos, or real-looking data passed off as content.
-- Tokens as objects, referenced everywhere; no scattered hex, so a theme swap is one edit.
-- One screen = one artboard at a real device size (e.g. 390×844 phone, 1320×896 desktop).
-- A section is one user flow or screen family; an artboard label states the screen's intent and the spec section it satisfies.
-- Match the platform's chrome (native status/tab bars vs a browser frame) so the prototype reads true.
+- Honest placeholders only — never fake photos, logos, or real-looking data passed off as content. Use the kit's \`.ph\` / \`.avatar\` placeholders.
+- One screen = one artboard at a real device size (e.g. 390×844 phone, 1320×896 desktop); match the platform's chrome (native status/tab bars vs a browser frame).
+- A section is one user flow or screen family; a screen's label states its intent and the spec section it satisfies.
 
-## Preview (verify visually before handing off)
+## Preview + edit (verify before handing off)
 
-Serve the bundle over HTTP and open it. A plain static server works; this zero-dep server also shims the canvas file-write bridge so artboard reorder/rename/hide persist to a sidecar:
+- Open \`agent-board web\` → Wireframes → the board. Toggle **Edit**, then click any text to retype it or any photo to replace it (pick from board media, upload a file, or paste a URL); hover any \`.stack\`/\`.row\` for a toolbar to reorder its children, flip direction (stack↔row), or step gap/padding on the \`--space-*\` scale; changes persist into the store (loopback-gated \`PUT /api/wireframe/edit\`), git-versioned. This is why auto-layout authoring matters — it's what makes layout live-editable. Same loop a non-technical reviewer uses.
+- Standalone: \`bun preview.js\` inside the bundle serves it and persists edits to disk.
+- Walk every screen and state, then hand off to the agent-board-design-review skill.
 
-\`\`\`js
-// preview.js — run: bun preview.js ; open http://localhost:4848
-const DIR = "./design/board", PORT = 4848;
-const SHIM = '<script>window.omelette={writeFile:(f,c)=>' +
-  'fetch("/__write?f="+encodeURIComponent(f),{method:"PUT",body:c})' +
-  '.then(r=>{if(!r.ok)throw new Error("write")})}</' + 'script>';
-Bun.serve({ port: PORT, async fetch(req) {
-  const u = new URL(req.url);
-  if (req.method === "PUT" && u.pathname === "/__write") {
-    if (u.searchParams.get("f") !== ".design-canvas.state.json")
-      return new Response("forbidden", { status: 403 });
-    await Bun.write(DIR + "/" + u.searchParams.get("f"), await req.text());
-    return new Response("ok");
-  }
-  const p = u.pathname === "/" ? "/index.html" : u.pathname;
-  const file = Bun.file(DIR + p);
-  if (!(await file.exists())) return new Response("not found", { status: 404 });
-  if (p.endsWith(".html"))
-    return new Response((await file.text()).replace("</head>", SHIM + "</head>"),
-      { headers: { "content-type": "text/html" } });
-  return new Response(file);
-}});
-\`\`\`
+## Reject-and-rewrite — run this before handing off
 
-The \`window.omelette\` shim is only needed when you reuse a Claude-Design canvas (it persists edits through that bridge); a board without it previews fine as plain static files.
-
-## Put it on the board
-
-- Save or export the working bundle to a temporary/repo directory, then register it with \`agent-board wireframe import <directory> --title "<title>" --category design\` (alias: \`agent-board design import\`). This copies the HTML bundle into the board's \`wireframes/<id>/\` artifact store.
-- Preview it through \`agent-board web\` in the Wireframes tab; do not require a project-specific \`package.json\` script for normal review.
-- Tie it to the work it serves: \`agent-board link <task-id> --spec <spec-id>\`, and mention the wireframe id in the spec/task body until task-wireframe links become first-class.
-- Hand off to review with the agent-board-design-review skill.
+Reject (and fix) any markup that:
+- has a raw hex or px outside \`tokens.css\` → replace with a token;
+- lays out with absolute / \`top\`/\`left\` magic numbers → rebuild with \`.stack\`/\`.row\` + token gaps;
+- repeats inline styling instead of using or adding a kit class → promote it to a component + card;
+- buries editable copy in a JS/array render → static, granular leaves;
+- fakes imagery, brands, or realistic data → honest placeholders.
 
 ## Don't
 
-- Don't write production framework code here — this is a prototype medium; the coder reimplements from it.
-- Don't fabricate imagery, brands, or realistic fake data.
-- Don't open over \`file://\`, and don't scatter raw hex instead of tokens.
+- Don't keep the canonical board in a loose dir — it belongs in the agent-board store, where edits round-trip.
+- Don't edit the shells (\`board-stage.js\` / \`editor.js\`); you write screens + tokens/kit, not runtime.
+- Don't scatter raw hex/px, hand-position layout, or one-off-style what should be a reused component.
 `;
 
 export const designWireframeSkillAgents = `# Agent Board Design Wireframe Rules
 
-- Author mode: produce a portable HTML-mockup board, not production code. A coder reimplements from it.
-- Zero-build medium: React + ReactDOM UMD + Babel standalone; files publish to \`window\`; load order is the dependency graph (kit -> screens -> canvas -> inline App).
-- Serve over HTTP and verify visually; never open from \`file://\`.
-- Honest placeholders only; tokens as objects (no scattered hex); one screen = one device-sized artboard; sections are flows; labels carry spec refs.
-- Register the bundle with \`agent-board wireframe import <directory> --category design\`, preview it through \`agent-board web\`, and tie it to its spec (\`agent-board link <task-id> --spec <spec-id>\`); hand off to agent-board-design-review.
+- Author mode: produce an editable design board — a real foundations → kit → screens system, not production code or one-off mockups. A coder reimplements from it.
+- Lives in the agent-board store: \`agent-board wireframe scaffold\` (alias \`design new\`) or \`wireframe import <dir> --category design\`; that \`wireframes/<id>/\` dir is the git-versioned source of truth where live edits persist. Never keep it in a loose dir.
+- Build through the shells, never on them: \`board-stage.js\`/\`editor.js\` are generic — you only write static screens + \`tokens.css\`/\`kit.css\`/\`components/\`. HTML is the data; the shells are the runtime.
+- The law (mandatory): tokens-first (no raw hex/px outside \`tokens.css\`); reuse-or-die (every element a token-driven kit class + an \`@dsCard\` card, instanced into screens — repeats spelled out, never looped); per-component \`--c-*\` tokens; layout = auto-layout primitives (\`.stack\`/\`.row\`/\`.between\`/\`.grow\` + \`--space-*\`), never absolute magic pixels.
+- Static, granular contract: one screen = \`<section data-screen>\`; every editable leaf carries \`data-edit="text|image"\` + a stable \`data-key\`. React only for genuinely interactive demos, never for editable copy (breaks click-to-edit + round-trip).
+- Honest placeholders only; one screen = one device-sized artboard; sections are flows; labels carry spec refs.
+- Preview + edit via \`agent-board web\` (toggle Edit; text + image via board media/upload/URL; layout via a hover toolbar on \`.stack\`/\`.row\` — reorder / direction / gap / padding; edits round-trip to the store); tie to spec (\`agent-board link <task-id> --spec <spec-id>\`); hand off to agent-board-design-review.
 `;
 
 export const designReviewSkillReadme = `---

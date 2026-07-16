@@ -1,0 +1,83 @@
+/* ============================================================
+   COMPONENT KIT — token-driven classes the AI composes screens
+   from. Each component exposes its own --c-* vars defaulting to
+   SEMANTIC tokens, so you re-theme three ways:
+     • globally   → edit tokens.css
+     • per type   → edit the component's --c-* default here
+     • per node   → inline style="--btn-bg: …" on one instance
+   RULE: reference var(--…) only — never hard-code hex/px here.
+   ============================================================ */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--color-canvas); color: var(--color-text);
+  font: var(--text-md)/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+
+/* ---- canvas + device artboards (the board shell) ---- */
+.canvas { min-height: 100vh; padding: 96px 48px 48px; display: flex; flex-wrap: wrap;
+  gap: var(--space-8); align-items: flex-start; justify-content: center; }
+.screen { position: relative; background: var(--color-surface); border-radius: 32px;
+  box-shadow: var(--shadow-pop); overflow: hidden; }
+.screen[data-device="phone"] { width: 390px; height: 844px; }
+.pad { padding: var(--space-5); }
+.statusbar { height: 44px; display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-xs); color: var(--color-muted); }
+
+/* ---- auto-layout primitives (Figma auto-layout ≈ flex) ---- */
+.stack { display: flex; flex-direction: column; gap: var(--space-4); }
+.row { display: flex; align-items: center; gap: var(--space-3); }
+.between { justify-content: space-between; }
+.grow { flex: 1; min-width: 0; }
+
+/* ---- type ---- */
+.title { font-size: var(--text-2xl); font-weight: var(--weight-bold); letter-spacing: -.01em; margin: 0; }
+.lead { font-size: var(--text-md); color: var(--color-muted); margin: 0; }
+.eyebrow { font-size: var(--text-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--color-muted); }
+.muted { color: var(--color-muted); font-size: var(--text-sm); }
+
+/* ---- button (per-component tokens) ---- */
+.btn { --btn-bg: var(--color-primary); --btn-fg: var(--color-on-accent);
+  --btn-pad: var(--space-4); --btn-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  background: var(--btn-bg); color: var(--btn-fg); padding: var(--btn-pad);
+  border: 0; border-radius: var(--btn-radius); font: inherit; font-weight: var(--weight-bold); cursor: pointer; }
+.btn--block { width: 100%; }
+.btn--accent { --btn-bg: var(--color-accent); }
+.btn--ghost { --btn-bg: transparent; --btn-fg: var(--color-primary); box-shadow: inset 0 0 0 1px var(--color-border); }
+
+/* ---- field ---- */
+.field { border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4); color: var(--color-muted); }
+
+/* ---- card ---- */
+.card { --card-bg: var(--color-surface); display: flex; gap: var(--space-3); align-items: center;
+  background: var(--card-bg); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-3); }
+.card__title { font-weight: var(--weight-bold); }
+
+/* ---- list ---- */
+.list-row { display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-4) var(--space-1); border-bottom: 1px solid var(--color-border); }
+.chev { color: var(--color-muted); }
+
+/* ---- honest media placeholders (an edited image lands in --img) ---- */
+.ph { --ph-radius: var(--radius-md); position: relative; height: 200px; border-radius: var(--ph-radius);
+  background: var(--img, none) center / cover no-repeat,
+    repeating-linear-gradient(45deg, var(--color-border) 0 8px, var(--color-surface-muted) 8px 16px); }
+.ph--cover { height: 64px; width: 64px; flex-shrink: 0; --ph-radius: var(--radius-sm); }
+.ph[data-label]::after { content: attr(data-label); position: absolute; left: var(--space-2); bottom: var(--space-2);
+  font: var(--text-xs)/1 ui-monospace, Menlo, monospace; color: var(--color-muted);
+  background: color-mix(in srgb, var(--color-surface) 70%, transparent); padding: 2px 6px; border-radius: var(--radius-sm); }
+.ph--cover[data-label]::after { display: none; }
+.avatar { --av-size: 44px; width: var(--av-size); height: var(--av-size); border-radius: var(--radius-pill); flex-shrink: 0;
+  background: var(--img, none) center / cover no-repeat,
+    radial-gradient(circle at 30% 30%, var(--color-surface-muted), var(--color-border)); }
+.avatar--lg { --av-size: 84px; }
+
+/* ---- edit affordances (only while the board root has [data-edit-on]) ---- */
+[data-edit-on] [data-edit] { outline: 1px dashed transparent; outline-offset: 3px; transition: outline-color .12s; }
+[data-edit-on] [data-edit]:hover { outline-color: var(--color-accent); }
+[data-edit-on] [data-edit="text"] { cursor: text; }
+[data-edit-on] [data-edit="text"]:focus { outline: 2px solid var(--color-accent); }
+[data-edit-on] [data-edit="image"] { cursor: pointer; }
+[data-edit].saved { animation: flash .6s; }
+@keyframes flash { from { background: color-mix(in srgb, var(--color-accent) 18%, transparent); } to { background: transparent; } }

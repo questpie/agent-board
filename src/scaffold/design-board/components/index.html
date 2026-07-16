@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Component kit</title>
+<!-- Catalog: every foundation + component as an @dsCard, the way the
+     nutrimeals ds-bundle index works. This is the kit the AI reuses — build
+     screens by instancing these, and add a card here when a pattern repeats. -->
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../kit.css" />
+<link rel="stylesheet" href="./ds-card.css" />
+<style>
+  .cat { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-5); }
+  .tile { background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-card); }
+  .tile .frame { height: 220px; overflow: hidden; border-bottom: 1px solid var(--color-border);
+    background: var(--color-canvas); }
+  .tile iframe { width: 100%; height: 100%; border: 0; pointer-events: none; }
+  .tile .meta { padding: var(--space-3) var(--space-4) var(--space-4); }
+  .tile .name { font-weight: var(--weight-bold); }
+  .tile a { color: var(--color-accent); text-decoration: none; font-size: var(--text-sm); }
+</style>
+</head>
+<body>
+  <header class="ds-head">
+    <p class="eyebrow">Design system</p>
+    <h1>Component kit</h1>
+    <p class="lead">Foundations + components, each a self-contained <code>@dsCard</code>. Screens are built by instancing these — never ad-hoc markup. If a pattern appears twice, add it here first.</p>
+  </header>
+
+  <div class="cat">
+    <article class="tile">
+      <div class="frame"><iframe src="./Foundations.html" loading="lazy" title="Foundations"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Foundations</span><a href="./Foundations.html" target="_blank">Open ↗</a></div><p class="muted">color · spacing · radius · type · elevation</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./Typography.html" loading="lazy" title="Typography"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Typography</span><a href="./Typography.html" target="_blank">Open ↗</a></div><p class="muted">title · lead · eyebrow · muted</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./Layout.html" loading="lazy" title="Layout"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Layout (auto-layout)</span><a href="./Layout.html" target="_blank">Open ↗</a></div><p class="muted">stack · row · between · grow</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./Button.html" loading="lazy" title="Button"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Button</span><a href="./Button.html" target="_blank">Open ↗</a></div><p class="muted">primary · accent · ghost; pill</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./Card.html" loading="lazy" title="Card"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Card</span><a href="./Card.html" target="_blank">Open ↗</a></div><p class="muted">surface + cover + text</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./Field.html" loading="lazy" title="Field"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Field</span><a href="./Field.html" target="_blank">Open ↗</a></div><p class="muted">input placeholder</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./List.html" loading="lazy" title="List"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">List</span><a href="./List.html" target="_blank">Open ↗</a></div><p class="muted">rows + chevron</p></div>
+    </article>
+    <article class="tile">
+      <div class="frame"><iframe src="./Media.html" loading="lazy" title="Media"></iframe></div>
+      <div class="meta"><div class="row between"><span class="name">Media &amp; placeholders</span><a href="./Media.html" target="_blank">Open ↗</a></div><p class="muted">ph · cover · avatar</p></div>
+    </article>
+  </div>
+</body>
+</html>

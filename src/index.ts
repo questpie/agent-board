@@ -16,7 +16,7 @@ import { buildMaintenanceReport, parseDurationMs, type MaintenanceReport } from 
 import type { TaskFile, Workspace, WorkspaceMode } from "./types.js";
 import { table } from "./utils.js";
 import { startWebServer } from "./web.js";
-import { getWireframe, importWireframe, listWireframes } from "./wireframes.js";
+import { getWireframe, importWireframe, listWireframes, scaffoldWireframe } from "./wireframes.js";
 import { archiveRecord, listArchivedRecords, parseArchiveKind, restoreArchivedRecord } from "./archive.js";
 import { isDefaultViewer, listShares, openUrl, parseShareKind, removeShare, shareArtifact, SHARE_KINDS } from "./share.js";
 
@@ -527,6 +527,26 @@ wireframe
 			console.log(`Entry: ${doc.meta.entry}`);
 			console.log(`Bundle: ${doc.dir}`);
 			console.log("Preview: agent-board web");
+		});
+	});
+
+wireframe
+	.command("scaffold")
+	.alias("new")
+	.option("--title <title>", "Wireframe title")
+	.option("--scope <scope>", "global, project, or goal", "project")
+	.option("--category <name>", "Group the wireframe under a category")
+	.description("Create a new editable design board in the agent-board store from the template")
+	.action(async (options) => {
+		await main(async () => {
+			const opts = readOptions<{ title?: string; scope: string; category?: string }>(options);
+			const workspace = currentWorkspace();
+			const scope = parseScope(opts.scope);
+			const doc = await scaffoldWireframe(workspace, { title: opts.title, scope, category: opts.category });
+			console.log(`Created wireframe ${scope}/${doc.meta.id}`);
+			console.log(`Entry: ${doc.meta.entry}`);
+			console.log(`Bundle: ${doc.dir}`);
+			console.log("Edit it live: agent-board web → Wireframes (toggle Edit)");
 		});
 	});
 

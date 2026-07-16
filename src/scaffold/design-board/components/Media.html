@@ -1,0 +1,35 @@
+<!-- @dsCard group="Components" name="Media & placeholders" subtitle="ph · ph--cover · avatar — honest placeholders; edited image lands in --img" -->
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Media &amp; placeholders</title>
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../kit.css" />
+<link rel="stylesheet" href="./ds-card.css" />
+</head>
+<body>
+  <header class="ds-head">
+    <p class="eyebrow">Components</p>
+    <h1>Media &amp; placeholders</h1>
+    <p class="lead">Honest placeholders — never fake imagery. In a screen, add <code>data-edit="image"</code> + <code>data-key</code>; an edited image lands in the <code>--img</code> custom prop (board media / upload / URL).</p>
+  </header>
+
+  <div class="ds-section">
+    <span class="muted">Hero (<code>.ph</code>)</span>
+    <div style="max-width:320px">
+      <div class="ph" data-label="hero image"></div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted">Cover thumb + avatars</span>
+    <div class="ds-row">
+      <div class="ph ph--cover" data-label="cover"></div>
+      <div class="avatar"></div>
+      <div class="avatar avatar--lg"></div>
+    </div>
+  </div>
+</body>
+</html>

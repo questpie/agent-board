@@ -6,7 +6,7 @@ import { listFlows, readFlowScript } from "./flow.js";
 import { listGoals, listProjects, resolveWorkspace, workspaceForGoal } from "./workspace.js";
 import { listTasks } from "./tasks.js";
 import type { Workspace } from "./types.js";
-import { listWireframes, wireframeAsset, wireframeWebPath } from "./wireframes.js";
+import { editWireframeNode, listWireframeAssets, listWireframes, saveWireframeAsset, wireframeAsset, wireframeWebPath } from "./wireframes.js";
 import { parseShareKind, readShareIndex, removeShare, shareArtifact, shareKey } from "./share.js";
 
 export interface WebServerOptions {
@@ -24,6 +24,9 @@ export async function startWebServer(options: WebServerOptions): Promise<void> {
 		try {
 			if (req.method === "POST" && url.pathname === "/api/share") return await handleShare(req, url, server);
 			if (req.method === "DELETE" && url.pathname === "/api/share") return await handleUnshare(req, url, server);
+			if (req.method === "PUT" && url.pathname === "/api/wireframe/edit") return await handleWireframeEdit(req, url, server);
+			if (req.method === "GET" && url.pathname === "/api/wireframe/assets") return await handleWireframeAssets(url);
+			if (req.method === "POST" && url.pathname === "/api/wireframe/asset") return await handleWireframeAssetUpload(req, url, server);
 			if (url.pathname.startsWith("/api/")) return await handleApi(url);
 			if (url.pathname.startsWith("/wireframes/")) return await handleWireframeAsset(url);
 			return await serveStatic(url.pathname);
@@ -459,6 +462,103 @@ async function handleUnshare(
 	if (!id) return json({ error: "Missing artifact id." }, 400);
 	const kind = parseShareKind(String(url.searchParams.get("kind") ?? ""));
 	return json(await removeShare(workspace, kind, id));
+}
+
+// Apply one inline wireframe edit (text/image) to the bundle's source HTML.
+// Loopback-only, like sharing — binding 0.0.0.0 must not let a LAN peer rewrite
+// the host's design files.
+async function handleWireframeEdit(
+	req: Request,
+	url: URL,
+	server: ReturnType<typeof Bun.serve>,
+): Promise<Response> {
+	const peer = server.requestIP(req);
+	if (peer && !isLoopback(peer.address)) {
+		return json({ error: "Editing is only available from localhost." }, 403);
+	}
+	const projects = await listProjects();
+	if (!projects.length) return json({ error: "No agent-board project found." }, 404);
+	const workspace = resolveWs(
+		projects,
+		url.searchParams.get("project") ?? undefined,
+		url.searchParams.get("goal") ?? undefined,
+	);
+	let payload: { scope?: unknown; id?: unknown; entry?: unknown; screen?: unknown; key?: unknown; kind?: unknown; value?: unknown; html?: unknown };
+	try {
+		payload = (await req.json()) as typeof payload;
+	} catch {
+		return json({ error: "Invalid JSON body." }, 400);
+	}
+	const kind = payload.kind === "image" ? "image" : payload.kind === "text" ? "text" : payload.kind === "layout" ? "layout" : null;
+	if (!kind) return json({ error: 'Invalid "kind" (expected "text", "image", or "layout").' }, 400);
+	try {
+		const result = await editWireframeNode(
+			workspace,
+			parseOverlayScope(String(payload.scope ?? "")),
+			safeName(typeof payload.id === "string" ? payload.id : null),
+			{
+				entry: typeof payload.entry === "string" ? payload.entry : undefined,
+				screen: String(payload.screen ?? ""),
+				key: typeof payload.key === "string" ? payload.key : undefined,
+				kind,
+				value: typeof payload.value === "string" ? payload.value : undefined,
+				html: typeof payload.html === "string" ? payload.html : undefined,
+			},
+		);
+		return json({ ok: true, ...result });
+	} catch (error) {
+		return json({ error: error instanceof Error ? error.message : String(error) }, 400);
+	}
+}
+
+// List a board's media (read-only; the assets are served anyway).
+async function handleWireframeAssets(url: URL): Promise<Response> {
+	const projects = await listProjects();
+	if (!projects.length) return json({ error: "No agent-board project found." }, 404);
+	const workspace = resolveWs(
+		projects,
+		url.searchParams.get("project") ?? undefined,
+		url.searchParams.get("goal") ?? undefined,
+	);
+	const assets = await listWireframeAssets(
+		workspace,
+		parseOverlayScope(url.searchParams.get("scope") ?? ""),
+		safeName(url.searchParams.get("id")),
+	);
+	return json({ assets });
+}
+
+// Upload an image into a board's assets/ store. Loopback-only, like editing.
+async function handleWireframeAssetUpload(
+	req: Request,
+	url: URL,
+	server: ReturnType<typeof Bun.serve>,
+): Promise<Response> {
+	const peer = server.requestIP(req);
+	if (peer && !isLoopback(peer.address)) {
+		return json({ error: "Uploads are only available from localhost." }, 403);
+	}
+	const projects = await listProjects();
+	if (!projects.length) return json({ error: "No agent-board project found." }, 404);
+	const workspace = resolveWs(
+		projects,
+		url.searchParams.get("project") ?? undefined,
+		url.searchParams.get("goal") ?? undefined,
+	);
+	const buf = await req.arrayBuffer();
+	if (buf.byteLength > 8 * 1024 * 1024) return json({ error: "File too large (max 8MB)." }, 413);
+	try {
+		const result = await saveWireframeAsset(
+			workspace,
+			parseOverlayScope(url.searchParams.get("scope") ?? ""),
+			safeName(url.searchParams.get("id")),
+			url.searchParams.get("name") ?? "image.png",
+			new Uint8Array(buf),
+		);
+		return json({ ok: true, ...result });
+	} catch (error) {
+		return json({ error: error instanceof Error ? error.message : String(error) }, 400);
+	}
 }
 
 function isLoopback(address: string): boolean {

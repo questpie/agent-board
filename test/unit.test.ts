@@ -9,7 +9,7 @@ import { atomicWrite, findWorktreeMainRoot } from "../src/utils.js";
 import { resolveWorkspace } from "../src/workspace.js";
 import { createTask, linkTaskSpec, linkTasks, listTasks, pickNextTask } from "../src/tasks.js";
 import { formatVerifyEvidence, parseVerifyCommands, runVerify } from "../src/verify.js";
-import { DEFAULT_FLOW_AGENT_MODE, DEFAULT_FLOW_AGENT_TIMEOUT_MS, modeToPermission, parseCodexMcpMode, parseDurationMs, parseStructuredOutput, prepareCodexFlowEnvironment, resolveCodexAcpBin, runLimited } from "../src/flow.js";
+import { DEFAULT_FLOW_AGENT_MODE, DEFAULT_FLOW_AGENT_TIMEOUT_MS, modeToPermission, parseCodexMcpMode, parseDurationMs, parseStructuredOutput, prepareCodexFlowEnvironment, resolveCodexAcpAdapter, resolveCodexAcpBin, runLimited } from "../src/flow.js";
 import type { Workspace } from "../src/types.js";
 import { Command } from "commander";
 import { findDrift } from "../src/skills-audit.js";
@@ -207,6 +207,29 @@ describe("flow agent mode", () => {
 });
 
 describe("flow Codex ACP override", () => {
+	test("builds the Codex adapter from the resolved ACP binary", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "agent-board-codex-adapter-"));
+		const bin = join(dir, "codex-acp");
+		await writeFile(bin, "");
+		const previous = process.env.AGENT_BOARD_CODEX_ACP_BIN;
+		try {
+			process.env.AGENT_BOARD_CODEX_ACP_BIN = bin;
+			const adapter = { id: "resolved-codex" };
+			const resolved = resolveCodexAcpAdapter((options) => {
+				expect(options).toEqual({ binPath: bin, env: { TEST_ENV: "1" } });
+				return adapter;
+			}, { TEST_ENV: "1" });
+
+			expect(resolved).toEqual({
+				adapter,
+				resolution: { path: bin, source: "env" },
+			});
+		} finally {
+			if (previous === undefined) delete process.env.AGENT_BOARD_CODEX_ACP_BIN;
+			else process.env.AGENT_BOARD_CODEX_ACP_BIN = previous;
+		}
+	});
+
 	test("resolves AGENT_BOARD_CODEX_ACP_BIN when set", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "agent-board-codex-acp-"));
 		const bin = join(dir, "codex-acp");

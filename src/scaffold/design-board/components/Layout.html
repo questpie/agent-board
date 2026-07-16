@@ -1,0 +1,53 @@
+<!-- @dsCard group="Components" name="Layout (auto-layout)" subtitle="stack · row · between · grow — flex + token gaps; never absolute" -->
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Layout (auto-layout)</title>
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../kit.css" />
+<link rel="stylesheet" href="./ds-card.css" />
+</head>
+<body>
+  <header class="ds-head">
+    <p class="eyebrow">Components</p>
+    <h1>Layout (auto-layout)</h1>
+    <p class="lead">This is how you lay out — Figma auto-layout ≈ flex. Gaps come from <code>--space-*</code>. <strong>Never</strong> position layout with absolute / <code>top</code>/<code>left</code> magic pixels.</p>
+  </header>
+
+  <div class="ds-section">
+    <span class="muted"><code>.stack</code> — column + gap</span>
+    <div class="stack">
+      <div class="demo">one</div>
+      <div class="demo">two</div>
+      <div class="demo">three</div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted"><code>.row</code> — inline + gap</span>
+    <div class="row">
+      <div class="demo">one</div>
+      <div class="demo">two</div>
+      <div class="demo">three</div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted"><code>.row.between</code> — push apart</span>
+    <div class="row between">
+      <div class="demo">start</div>
+      <div class="demo">end</div>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <span class="muted"><code>.grow</code> — fill the remaining space</span>
+    <div class="row">
+      <div class="demo">fixed</div>
+      <div class="demo grow">grow</div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!-- @dsCard group="Components" name="Button" subtitle="primary · accent · ghost; pill by default; token-driven" -->
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Button</title>
+<!-- A component definition is a standalone card: link the foundations, then show
+     every variant/state built ONLY from kit classes + tokens. This is the unit
+     the AI reuses (and instances into screens) — never ad-hoc one-off markup. -->
+<link rel="stylesheet" href="../tokens.css" />
+<link rel="stylesheet" href="../kit.css" />
+<link rel="stylesheet" href="./ds-card.css" />
+</head>
+<body>
+  <p class="eyebrow">Components</p>
+  <h1 class="title">Button</h1>
+  <p class="lead">Token-driven. Re-theme via <code>--btn-*</code> (per component) or <code>--color-primary</code> (semantic). Pill by default.</p>
+
+  <div class="ds-section">
+    <p class="muted">Variants</p>
+    <div class="ds-row">
+      <button class="btn">Primary</button>
+      <button class="btn btn--accent">Accent</button>
+      <button class="btn btn--ghost">Ghost</button>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <p class="muted">Per-instance override (inline component token)</p>
+    <div class="ds-row">
+      <button class="btn" style="--btn-radius:var(--radius-md)">Less round</button>
+      <button class="btn" style="--btn-bg:var(--color-accent)">Custom bg</button>
+    </div>
+  </div>
+
+  <div class="ds-section">
+    <p class="muted">Full width (in a screen)</p>
+    <div class="ds-row" style="width:280px">
+      <button class="btn btn--block">Block</button>
+    </div>
+  </div>
+</body>
+</html>

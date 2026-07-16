@@ -124,7 +124,7 @@ Thirteen skills are bundled:
 - `agent-board-worker`: legacy name for the same one-task implementation workflow; kept for compatibility.
 - `agent-board-grill`: adversarial challenge mode for weak assumptions, stale decisions, missing evidence, and risk review.
 - `agent-board-maintenance`: read-only board hygiene. Reports stale claims/runs, broken links, archive candidates, and consolidation candidates before cleanup.
-- `agent-board-design-wireframe`: authors an HTML-mockup wireframe (design board) — zero-build React-UMD + Babel, a window-globals design kit, and a Figma-like canvas of device-sized artboards. Import with `agent-board wireframe import`, then preview through `agent-board web`.
+- `agent-board-design-wireframe`: authors an **editable design board** — a zero-build foundations → kit → screens system in static, granular HTML (a tiered token system, a reusable component kit, auto-layout primitives, a Figma-like canvas of device-sized artboards). `agent-board wireframe scaffold` (alias `agent-board design new`) creates one in the board store; in `agent-board web` a human edits it live — retype text, swap images (board media / upload / URL), reorder and reflow layout — and every change round-trips to the source HTML. Import an existing bundle with `agent-board wireframe import`.
 - `agent-board-design-review`: read-only critique of a wireframe against its spec — screenshot and inspect each artboard, then file concrete, spec-linked findings.
 - `agent-board-design-qa`: measures the IMPLEMENTED, running UI instead of eyeballing a screenshot — a portable DOM geometry scan (overflow, truncation, misalignment, tap targets), design-token and contrast checks, an optional reference pixel-diff, and a vision judge only for the residual. Runs through whatever browser/preview tools the harness already exposes.
 
@@ -194,9 +194,10 @@ diagnostics.jsonl # filtered runtime issues only
 ```
 
 Raw Codex/ACP stderr is quiet by default; use `--verbose` only when debugging the runtime.
-For macOS Keychain stability with Codex flows, agent-board runs the bundled
-native `codex-acp` binary directly when it is available. Set
-`AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin a different ACP executable.
+Agent-board ships the maintained `@agentclientprotocol/codex-acp` adapter and a
+compatible Codex CLI, and reuses your local Codex authentication. Set
+`AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin a different ACP executable;
+the same override is used for model discovery and flow execution.
 
 ## Maintenance
 
@@ -235,7 +236,7 @@ Browse goals, tasks, specs, knowledge, wireframes, and flow runs from any regist
 - **Goals** show progress and a status breakdown at a glance. Selecting one opens its Overview.
 - **Tasks** render the full graph: status, priority, dependencies, verify evidence, and the Markdown body.
 - **Specs and knowledge** filter by category (set with `spec new --category`, `spec categorize`, or the knowledge equivalents).
-- **Wireframes** serve imported HTML design-board bundles in an iframe, so live mockups can be reviewed next to their specs without a project-specific preview script.
+- **Wireframes** serve HTML design-board bundles in an iframe, so live mockups can be reviewed next to their specs without a project-specific preview script. Toggle **Edit** to retype text, swap images (board media / upload / URL), and reorder or reflow layout in place — changes round-trip to the board's source HTML (loopback-only).
 - **Flow runs** show agent output, the run summary, and a timeline. Running waves poll automatically.
 
 Every tab is deep-linkable (for example `#tasks/<id>` or `#flows/<run-id>`), so a link to a specific task or run is shareable.

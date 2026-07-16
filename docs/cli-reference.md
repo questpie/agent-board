@@ -218,9 +218,10 @@ Diagnostics: <run>/diagnostics.jsonl
 
 Read `summary.md` first.
 
-For Codex runtime on macOS, agent-board runs the bundled native `codex-acp`
-binary directly when it is available. Set `AGENT_BOARD_CODEX_ACP_BIN` only when
-you need to pin a different ACP executable.
+Agent-board ships the maintained `@agentclientprotocol/codex-acp` adapter and a
+compatible Codex CLI, and reuses your local Codex authentication. Set
+`AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin a different ACP executable;
+the same override is used for model discovery and flow execution.
 
 ## Maintenance
 

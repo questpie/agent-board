@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Design board</title>
+<!-- Foundations first: values, then the component kit. Screens reference only
+     these — no raw hex/px in the markup. -->
+<link rel="stylesheet" href="./tokens.css" />
+<link rel="stylesheet" href="./kit.css" />
+</head>
+<body>
+  <!-- The board root. The shells (board-stage, editor) scope their parsing to
+       [data-board]; everything inside is static, granular HTML — the source of
+       truth the host rewrites on disk. One screen = one artboard; every editable
+       leaf carries data-edit (kind) + data-key (stable id within the screen). -->
+  <div class="canvas" data-board>
+    <section class="screen" data-device="phone" data-screen="login" data-title="Login">
+      <div class="statusbar">9:41</div>
+      <div class="pad stack">
+        <div class="ph" data-edit="image" data-key="hero" data-label="hero image"></div>
+        <div class="stack" style="gap:var(--space-2)">
+          <h1 class="title" data-edit="text" data-key="title">Vitaj späť</h1>
+          <p class="lead" data-edit="text" data-key="subtitle">Prihlás sa do svojho účtu.</p>
+        </div>
+        <div class="field">email@example.com</div>
+        <div class="field">••••••••</div>
+        <div class="btn btn--block" data-edit="text" data-key="cta">Prihlásiť sa</div>
+      </div>
+    </section>
+
+    <section class="screen" data-device="phone" data-screen="home" data-title="Home">
+      <div class="statusbar">9:41</div>
+      <div class="pad stack">
+        <div class="row between">
+          <h1 class="title" data-edit="text" data-key="title">Objavuj</h1>
+          <div class="avatar" data-edit="image" data-key="me" data-label="avatar"></div>
+        </div>
+        <p class="lead" data-edit="text" data-key="subtitle">Vybrané pre teba</p>
+        <div class="card">
+          <div class="ph ph--cover" data-edit="image" data-key="card1img" data-label="cover"></div>
+          <div class="grow">
+            <div class="card__title" data-edit="text" data-key="card1title">Ranná rutina</div>
+            <div class="muted" data-edit="text" data-key="card1sub">5 min · čítanie</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="ph ph--cover" data-edit="image" data-key="card2img" data-label="cover"></div>
+          <div class="grow">
+            <div class="card__title" data-edit="text" data-key="card2title">Plán nak týždeň</div>
+            <div class="muted" data-edit="text" data-key="card2sub">Aktualizované dnes</div>
+          </div>
+        </div>
+        <div class="btn btn--block" data-edit="text" data-key="cta">Zobraziť všetko</div>
+      </div>
+    </section>
+
+    <section class="screen" data-device="phone" data-screen="profile" data-title="Profile">
+      <div class="statusbar">9:41</div>
+      <div class="pad stack">
+        <div class="stack" style="align-items:center;text-align:center;gap:var(--space-2)">
+          <div class="avatar avatar--lg" data-edit="image" data-key="avatar" data-label="avatar"></div>
+          <h1 class="title" data-edit="text" data-key="name">Jana Nováková</h1>
+          <p class="lead" data-edit="text" data-key="email">jana@example.com</p>
+        </div>
+        <div>
+          <div class="list-row"><span data-edit="text" data-key="row1">Účet</span><span class="chev">›</span></div>
+          <div class="list-row"><span data-edit="text" data-key="row2">Notifikácie</span><span class="chev">›</span></div>
+          <div class="list-row"><span data-edit="text" data-key="row3">Súkromie</span><span class="chev">›</span></div>
+        </div>
+        <div class="btn btn--ghost btn--block" data-edit="text" data-key="cta">Odhlásiť sa</div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // Host bridge — persist one patch to whoever owns the source on disk.
+    // Under `agent-board web` the page is served at
+    //   /wireframes/<project>/<goal>/<scope>/<id>/<entry...>
+    // so we PUT to the board's loopback-gated edit API with those coords;
+    // standalone (preview.js) it falls back to /__edit. Same static bundle,
+    // either host.
+    window.boardHost = {
+      // Board coords from the URL when served under agent-board web
+      // (/wireframes/<project>/<goal>/<scope>/<id>/<entry...>); null standalone,
+      // where the /__edit, /__assets, /__upload preview routes apply instead.
+      _target() {
+        const m = location.pathname.match(/^\/wireframes\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\//);
+        if (!m) return null;
+        return {
+          project: decodeURIComponent(m[1]),
+          goal: decodeURIComponent(m[2]),
+          scope: decodeURIComponent(m[3]),
+          id: decodeURIComponent(m[4]),
+          entry: location.pathname.split("/").slice(6).map(decodeURIComponent).join("/") || "index.html",
+        };
+      },
+      _q(t) {
+        return "project=" + encodeURIComponent(t.project) + "&goal=" + encodeURIComponent(t.goal) +
+          "&scope=" + encodeURIComponent(t.scope) + "&id=" + encodeURIComponent(t.id);
+      },
+      async write(patch) {
+        const t = this._target();
+        const url = t
+          ? "/api/wireframe/edit?project=" + encodeURIComponent(t.project) + "&goal=" + encodeURIComponent(t.goal)
+          : "/__edit";
+        const body = t ? { scope: t.scope, id: t.id, entry: t.entry, ...patch } : patch;
+        const r = await fetch(url, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error("persist failed: " + r.status + " " + (await r.text()));
+      },
+      // The board's media library — relative asset paths.
+      async listAssets() {
+        const t = this._target();
+        const r = await fetch(t ? "/api/wireframe/assets?" + this._q(t) : "/__assets");
+        if (!r.ok) return [];
+        return (await r.json()).assets || [];
+      },
+      // Upload a File into the board's assets/, returns its relative path.
+      async uploadAsset(file) {
+        const t = this._target();
+        const name = encodeURIComponent(file.name || "image.png");
+        const url = t ? "/api/wireframe/asset?" + this._q(t) + "&name=" + name : "/__upload?name=" + name;
+        const r = await fetch(url, { method: t ? "POST" : "PUT", body: file });
+        if (!r.ok) throw new Error("upload failed: " + r.status + " " + (await r.text()));
+        return (await r.json()).path;
+      },
+    };
+  </script>
+  <script src="./board-stage.js"></script>
+  <script src="./editor.js"></script>
+</body>
+</html>

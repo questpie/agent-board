@@ -8,7 +8,7 @@ The CLI is not meant to be a human workflow builder. Humans can speak naturally;
 
 Flows call no model API directly and need no API keys. Each `agent(...)` spawns a locally installed coding agent over the Agent Client Protocol via [spawn-agent](https://www.npmjs.com/package/spawn-agent), reusing that agent's own auth:
 
-- `--runtime codex` (default): the Codex CLI must be installed and logged in. agent-board prefers the bundled native `codex-acp` binary when it resolves (override with `AGENT_BOARD_CODEX_ACP_BIN`); authentication still comes from your local Codex login.
+- `--runtime codex` (default): agent-board ships the maintained `@agentclientprotocol/codex-acp` adapter with a compatible Codex CLI (0.144.4+), and reuses your local Codex login. Override the executable with `AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin another ACP build.
 - `--runtime claude`: Claude Code must be installed and logged in.
 - `--runtime cursor`: Cursor Agent must be installed and logged in.
 - `--runtime copilot`: GitHub Copilot CLI must be installed and logged in.
@@ -203,9 +203,9 @@ Read order:
 3. `diagnostics.jsonl` only for runtime or MCP issues
 
 Raw agent stderr is quiet by default. Use `--verbose` only when debugging the runtime.
-For Codex runtime on macOS, agent-board runs the bundled native `codex-acp`
-binary directly when it is available. Set `AGENT_BOARD_CODEX_ACP_BIN` only when
-you need to pin a different ACP executable for Keychain stability.
+Agent-board uses the same bundled Codex ACP executable for model discovery and
+flow execution. Set `AGENT_BOARD_CODEX_ACP_BIN` only when you need to pin a
+different ACP build.
 
 ### `events.jsonl` schema
 
